@@ -74,6 +74,12 @@ type DownloadConfig struct {
 	// QueueTimeout: a transfer still queued remotely after this long is
 	// cancelled and the next candidate is tried.
 	QueueTimeout Duration `toml:"queue_timeout"`
+	// QueueSkipTimeout: a transfer still queued remotely after this long is
+	// cancelled early when at least QueueSkipMinAlternatives other
+	// auto-eligible candidates remain untried. Such skips do not count
+	// toward MaxCandidateAttempts. Manual review picks are exempt. 0 disables.
+	QueueSkipTimeout         Duration `toml:"queue_skip_timeout"`
+	QueueSkipMinAlternatives int      `toml:"queue_skip_min_alternatives"`
 	// StallTimeout: an in-progress transfer with no new bytes for this long
 	// is treated as failed. 0 disables.
 	StallTimeout Duration `toml:"stall_timeout"`
@@ -115,10 +121,12 @@ func Default() *Config {
 		QualityPreset: "lossless-first",
 		SpeedPreset:   "medium",
 		Download: DownloadConfig{
-			QueueTimeout:         D(5 * time.Minute),
-			StallTimeout:         D(3 * time.Minute),
-			MaxCandidateAttempts: 3,
-			PollInterval:         D(2 * time.Second),
+			QueueTimeout:             D(5 * time.Minute),
+			QueueSkipTimeout:         D(time.Minute),
+			QueueSkipMinAlternatives: 2,
+			StallTimeout:             D(3 * time.Minute),
+			MaxCandidateAttempts:     3,
+			PollInterval:             D(2 * time.Second),
 		},
 		Match:          match.DefaultConfig(),
 		QualityPresets: match.DefaultQualityPresets(),
@@ -361,6 +369,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Download.MaxCandidateAttempts < 1 {
 		errs = append(errs, "download.max_candidate_attempts must be >= 1")
+	}
+	if c.Download.QueueSkipMinAlternatives < 1 {
+		errs = append(errs, "download.queue_skip_min_alternatives must be >= 1")
 	}
 	if len(errs) > 0 {
 		return errors.New("invalid config: " + strings.Join(errs, "; "))

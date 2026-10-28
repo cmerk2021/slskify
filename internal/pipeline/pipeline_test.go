@@ -429,3 +429,56 @@ func TestFilesFromResponses(t *testing.T) {
 		t.Fatalf("%+v", fs)
 	}
 }
+
+func TestPipelineQueueSkipWithAlternatives(t *testing.T) {
+	sl := &fakeSlskd{
+		responses: func(string) []slskd.Response {
+			return []slskd.Response{goodResponse("s1", 9e6), goodResponse("s2", 8e6), goodResponse("s3", 7e6),
+				goodResponse("ok", 6e6), goodResponse("spare", 5e6)}
+		},
+		behavior: map[string]string{"s1": "queue", "s2": "queue", "s3": "queue"},
+	}
+	opts := testOptions()
+	opts.Download.QueueSkipTimeout = config.D(20 * time.Millisecond)
+	opts.Download.QueueSkipMinAlternatives = 2
+	h := newHarness(t, sl, opts, wonderwall)
+	h.start(opts, nil)
+	v := h.waitState(0, store.StateDone)
+	// Three skips plus a success would exceed max_candidate_attempts=3 if
+	// skips counted.
+	if v.ChosenUser != "ok" {
+		t.Fatalf("chosen %s; enqueued %v", v.ChosenUser, sl.Enqueued())
+	}
+	if v.Attempts != 1 {
+		t.Fatalf("skips should not count as attempts: %d", v.Attempts)
+	}
+	sl.mu.Lock()
+	defer sl.mu.Unlock()
+	if len(sl.cancelled) != 3 {
+		t.Fatalf("cancelled %v", sl.cancelled)
+	}
+}
+
+func TestPipelineQueueSkipNeedsAlternatives(t *testing.T) {
+	sl := &fakeSlskd{
+		responses: func(string) []slskd.Response {
+			return []slskd.Response{goodResponse("stuck", 9e6), goodResponse("ok", 5e6)}
+		},
+		behavior: map[string]string{"stuck": "queue"},
+	}
+	opts := testOptions()
+	opts.Download.QueueSkipTimeout = config.D(10 * time.Millisecond)
+	opts.Download.QueueSkipMinAlternatives = 2
+	h := newHarness(t, sl, opts, wonderwall)
+	h.start(opts, nil)
+	h.waitState(0, store.StateDownloading)
+	time.Sleep(150 * time.Millisecond)
+	if s := h.r.Snapshot(); s.Tracks[0].State != store.StateDownloading {
+		t.Fatalf("state %s", s.Tracks[0].State)
+	}
+	sl.mu.Lock()
+	defer sl.mu.Unlock()
+	if len(sl.cancelled) != 0 || len(sl.enqueued) != 1 {
+		t.Fatalf("only one alternative: should keep waiting; cancelled %v enqueued %v", sl.cancelled, sl.enqueued)
+	}
+}
