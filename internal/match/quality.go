@@ -108,9 +108,13 @@ type QualityPolicy struct {
 	MinBitrate int `toml:"min_bitrate" json:"min_bitrate"`
 	// PreferBitDepth / PreferSampleRate: preferred lossless format
 	// (default 16-bit / 44.1 kHz ranks above hi-res).
-	PreferBitDepth   int    `toml:"prefer_bit_depth" json:"prefer_bit_depth"`
-	PreferSampleRate int    `toml:"prefer_sample_rate" json:"prefer_sample_rate"`
-	Tiers            []Tier `toml:"tiers" json:"tiers"`
+	PreferBitDepth   int `toml:"prefer_bit_depth" json:"prefer_bit_depth"`
+	PreferSampleRate int `toml:"prefer_sample_rate" json:"prefer_sample_rate"`
+	// Rank is the compact form of Tiers (see ParseRankRule), best first,
+	// e.g. ["mp3 320", "flac", "mp3"]. When set, Compile replaces Tiers
+	// with it and derives AllowedExtensions if those are empty.
+	Rank  []string `toml:"rank,omitempty" json:"rank,omitempty"`
+	Tiers []Tier   `toml:"tiers" json:"tiers"`
 }
 
 func bptr(b bool) *bool { return &b }

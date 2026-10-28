@@ -129,20 +129,40 @@ type prerunModel struct {
 	qp             map[string]string
 	sp             map[string]config.SpeedPreset
 	qi, si, focus  int
+	// confirmDel is the preset awaiting a second "d" to be deleted.
+	confirmDel string
 }
 
 func newPrerunModel(a *app.App, coll *spotify.Collection, resume *store.RunSummary) *prerunModel {
-	p := &prerunModel{coll: coll, resume: resume, qNames: a.Cfg.QualityPresetNames(), sNames: a.Cfg.SpeedPresetNames(),
-		qp: map[string]string{}, sp: a.Cfg.SpeedPresets}
-	for n, q := range a.Cfg.QualityPresets {
-		p.qp[n] = q.Description
-	}
+	p := &prerunModel{coll: coll, resume: resume, sNames: a.Cfg.SpeedPresetNames(), sp: a.Cfg.SpeedPresets}
 	q, s := a.Cfg.QualityPreset, a.Cfg.SpeedPreset
 	if resume != nil {
 		q, s = resume.QualityPreset, resume.SpeedPreset
 	}
-	p.qi, p.si = indexOf(p.qNames, q), indexOf(p.sNames, s)
+	p.reload(a, q)
+	p.si = indexOf(p.sNames, s)
 	return p
+}
+
+// reload refreshes the quality presets (after the profile editor saved or
+// deleted one) and selects sel, or keeps the current selection if sel is
+// empty or gone.
+func (p *prerunModel) reload(a *app.App, sel string) {
+	cur := ""
+	if len(p.qNames) > 0 {
+		cur = p.qNames[p.qi]
+	}
+	p.qNames, p.qp = a.Cfg.QualityPresetNames(), map[string]string{}
+	for n, q := range a.Cfg.QualityPresets {
+		p.qp[n] = q.Description
+	}
+	if _, ok := a.Cfg.QualityPresets[sel]; !ok {
+		sel = cur
+	}
+	if _, ok := a.Cfg.QualityPresets[sel]; !ok {
+		sel = a.Cfg.QualityPreset
+	}
+	p.qi = indexOf(p.qNames, sel)
 }
 
 func indexOf(xs []string, x string) int {
@@ -167,7 +187,45 @@ func (m *Model) updatePrerun(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if p.focus == 1 {
 		cur, n = &p.si, len(p.sNames)
 	}
+	confirm := p.confirmDel
+	p.confirmDel = ""
 	switch k.String() {
+	case "n", "e", "c":
+		orig, from := "", ""
+		switch k.String() {
+		case "e":
+			orig = p.quality()
+		case "c":
+			from = p.quality()
+		}
+		m.profile = newProfileModel(m.app, orig, from)
+		m.screen = scrProfile
+		return m, m.profile.init()
+	case "d", "delete":
+		if p.focus != 0 {
+			return m, nil
+		}
+		name := p.quality()
+		builtin := config.IsBuiltinQualityPreset(name)
+		if confirm != name {
+			p.confirmDel = name
+			if builtin {
+				m.info(fmt.Sprintf("Press d again to reset %q to the built-in definition", name))
+			} else {
+				m.info(fmt.Sprintf("Press d again to delete quality profile %q", name))
+			}
+			return m, nil
+		}
+		if err := m.app.DeleteQualityPreset(name); err != nil {
+			m.fail(err)
+			return m, nil
+		}
+		p.reload(m.app, "")
+		if builtin {
+			m.info(fmt.Sprintf("Reset %q to the built-in definition", name))
+		} else {
+			m.info(fmt.Sprintf("Deleted quality profile %q", name))
+		}
 	case "tab", "shift+tab", "left", "right", "h", "l":
 		p.focus = 1 - p.focus
 	case "up", "k":
@@ -245,5 +303,5 @@ func (p *prerunModel) view(w, h int) (string, string) {
 		}
 		return d, sp.Warning
 	})
-	return fitLines(lines, w, h), helpLine("tab", "switch list", "↑↓", "choose", "enter", "start", "esc", "back", "q", "quit")
+	return fitLines(lines, w, h), helpLine("tab", "switch list", "↑↓", "choose", "enter", "start", "n/e/c/d", "new/edit/copy/delete quality profile", "esc", "back", "q", "quit")
 }

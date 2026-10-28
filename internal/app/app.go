@@ -151,3 +151,39 @@ func (a *App) Credentials() config.Credentials {
 		SpotifyClientID: a.Cfg.Spotify.ClientID, SpotifyClientSecret: a.Cfg.Spotify.ClientSecret,
 	}
 }
+
+// SaveQualityPreset compiles qp, writes it to the config file as
+// [quality_presets.<name>] and makes it available immediately.
+func (a *App) SaveQualityPreset(name string, qp config.QualityProfile) error {
+	base, ok := a.Cfg.QualityPresets[name]
+	if !ok {
+		base = match.QualityPolicy{}
+	}
+	pol, err := qp.Policy(base)
+	if err != nil {
+		return err
+	}
+	if err := config.SaveQualityPreset(a.CfgPath, name, qp); err != nil {
+		return fmt.Errorf("saving config: %w", err)
+	}
+	a.Cfg.QualityPresets[name] = pol
+	return nil
+}
+
+// DeleteQualityPreset removes a custom preset from the config file. For a
+// built-in name it removes the override and restores the built-in.
+func (a *App) DeleteQualityPreset(name string) error {
+	builtin := config.IsBuiltinQualityPreset(name)
+	if !builtin && name == a.Cfg.QualityPreset {
+		return fmt.Errorf("%q is the default quality_preset in %s; change that first", name, a.CfgPath)
+	}
+	if err := config.DeleteQualityPreset(a.CfgPath, name); err != nil {
+		return fmt.Errorf("saving config: %w", err)
+	}
+	if builtin {
+		a.Cfg.QualityPresets[name] = match.DefaultQualityPresets()[name]
+	} else {
+		delete(a.Cfg.QualityPresets, name)
+	}
+	return nil
+}

@@ -36,6 +36,7 @@ const (
 	scrLoading
 	scrPrerun
 	scrMain
+	scrProfile
 	scrQuitting
 )
 
@@ -77,6 +78,7 @@ type Model struct {
 	setup   *setupModel
 	picker  *pickerModel
 	prerun  *prerunModel
+	profile *profileModel
 	main    *mainModel
 	spin    spinner.Model
 	loading string
@@ -301,6 +303,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updatePicker(msg)
 	case scrPrerun:
 		return m.updatePrerun(msg)
+	case scrProfile:
+		return m.updateProfile(msg)
 	case scrMain:
 		return m.updateMain(msg)
 	case scrLoading, scrQuitting:
@@ -372,6 +376,8 @@ func (m *Model) View() string {
 		body, help = m.picker.view(w, h-2)
 	case scrPrerun:
 		body, help = m.prerun.view(w, h-2)
+	case scrProfile:
+		body, help = m.profile.view(w, h-2)
 	case scrMain:
 		body, help = m.main.view(m.snap, w, h-2)
 	case scrLoading, scrQuitting:
