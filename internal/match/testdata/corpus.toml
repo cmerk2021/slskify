@@ -1,0 +1,232 @@
+# Matcher corpus: real-world-style Soulseek paths and the expected verdict.
+#
+# Add cases you find with `slskify dry-run <url>`. Each [[case]] describes
+# one Spotify track and one remote file.
+#
+#   expect = "match"   confidence >= high threshold (80)
+#   expect = "review"  low (50) <= confidence < high
+#   expect = "reject"  confidence < low threshold (50)
+#   min_conf / max_conf optionally tighten the bounds.
+#
+# Track fields: title, artists, album, album_type, track_number,
+#   duration_s, explicit.
+# File fields:  path, length_s (0 = unknown), bitrate, size_mb (default 8).
+
+[[case]]
+note = "plain album folder"
+title = "Karma Police"
+artists = ["Radiohead"]
+album = "OK Computer"
+track_number = 6
+duration_s = 264
+path = '@@kq\Music\Radiohead\OK Computer (1997)\06 - Karma Police.flac'
+length_s = 264
+expect = "match"
+
+[[case]]
+note = "band named Live is not a live version"
+title = "Lightning Crashes"
+artists = ["Live"]
+album = "Throwing Copper"
+track_number = 7
+duration_s = 325
+path = '@@zz\Live\Throwing Copper\07 Lightning Crashes.mp3'
+length_s = 325
+expect = "match"
+
+[[case]]
+note = "numeric title"
+title = "1979"
+artists = ["The Smashing Pumpkins"]
+album = "Mellon Collie and the Infinite Sadness"
+track_number = 5
+duration_s = 266
+path = '@@p\Smashing Pumpkins\Mellon Collie And The Infinite Sadness CD2\05 - 1979.mp3'
+length_s = 266
+expect = "match"
+
+[[case]]
+note = "title starting with a number"
+title = "99 Problems"
+artists = ["JAY-Z"]
+album = "The Black Album"
+track_number = 10
+duration_s = 234
+path = '@@j\Jay-Z - The Black Album\10 - Jay-Z - 99 Problems.mp3'
+length_s = 234
+expect = "match"
+
+[[case]]
+note = "Guns N' Roses spelled with and"
+title = "Sweet Child O' Mine"
+artists = ["Guns N' Roses"]
+album = "Appetite For Destruction"
+track_number = 9
+duration_s = 356
+path = '@@g\Guns and Roses - Sweet Child O Mine.mp3'
+length_s = 356
+expect = "match"
+
+[[case]]
+note = "parenthetical that is part of the title"
+title = "(Don't Fear) The Reaper"
+artists = ["Blue Öyster Cult"]
+album = "Agents of Fortune"
+track_number = 1
+duration_s = 308
+path = '@@b\Blue Oyster Cult\1976 - Agents Of Fortune\01 - Dont Fear The Reaper.flac'
+length_s = 308
+expect = "match"
+
+[[case]]
+note = "feat. in Spotify title, ft. in filename"
+title = "Stay (with Justin Bieber)"
+artists = ["The Kid LAROI", "Justin Bieber"]
+album = "F*CK LOVE 3: OVER YOU"
+duration_s = 141
+path = '@@x\The Kid LAROI ft. Justin Bieber - Stay.mp3'
+length_s = 141
+expect = "match"
+
+[[case]]
+note = "vinyl side prefix"
+title = "Money"
+artists = ["Pink Floyd"]
+album = "The Dark Side of the Moon"
+track_number = 6
+duration_s = 382
+path = '@@v\Pink Floyd\The Dark Side Of The Moon (Vinyl 24-96)\B1 Money.flac'
+length_s = 382
+expect = "match"
+
+[[case]]
+note = "remaster suffix on Spotify, plain file"
+title = "Here Comes The Sun - Remastered 2009"
+artists = ["The Beatles"]
+album = "Abbey Road (Remastered)"
+track_number = 7
+duration_s = 185
+path = '@@b\The Beatles\Abbey Road\07 Here Comes The Sun.mp3'
+length_s = 185
+expect = "match"
+
+[[case]]
+note = "nightcore upload"
+title = "Running Up That Hill (A Deal With God)"
+artists = ["Kate Bush"]
+album = "Hounds Of Love"
+duration_s = 298
+path = '@@n\nightcore\Running Up That Hill - Nightcore.mp3'
+length_s = 240
+expect = "reject"
+
+[[case]]
+note = "tribute band"
+title = "Smells Like Teen Spirit"
+artists = ["Nirvana"]
+album = "Nevermind"
+duration_s = 301
+path = '@@t\Tribute To Nirvana\01 - Smells Like Teen Spirit.mp3'
+length_s = 300
+expect = "reject"
+
+[[case]]
+note = "different song with the title as a substring"
+title = "Hello"
+artists = ["Adele"]
+album = "25"
+duration_s = 295
+path = '@@h\Adele\25\Hello Goodbye.mp3'
+length_s = 295
+expect = "review"
+max_conf = 79
+
+[[case]]
+note = "preview clip"
+title = "Levitating"
+artists = ["Dua Lipa"]
+album = "Future Nostalgia"
+duration_s = 203
+path = '@@p\Dua Lipa - Levitating (Preview).mp3'
+length_s = 30
+expect = "reject"
+
+[[case]]
+note = "unknown length but everything else lines up"
+title = "Hey Jude"
+artists = ["The Beatles"]
+album = "Hey Jude"
+album_type = "single"
+duration_s = 431
+path = '@@b\Beatles\1\21 - Hey Jude.mp3'
+length_s = 0
+expect = "review"
+
+[[case]]
+note = "Taylor's Version on Spotify, original on Soulseek"
+title = "Love Story (Taylor's Version)"
+artists = ["Taylor Swift"]
+album = "Fearless (Taylor's Version)"
+track_number = 3
+duration_s = 236
+path = '@@t\Taylor Swift\Fearless\03 - Love Story.mp3'
+length_s = 235
+expect = "review"
+max_conf = 70
+
+[[case]]
+note = "original on Spotify, Taylor's Version on Soulseek"
+title = "Love Story"
+artists = ["Taylor Swift"]
+album = "Fearless"
+track_number = 3
+duration_s = 235
+path = '''@@t\Taylor Swift - Love Story (Taylor's Version).mp3'''
+length_s = 236
+expect = "review"
+max_conf = 70
+
+[[case]]
+note = "clean version of an explicit track"
+title = "HUMBLE."
+artists = ["Kendrick Lamar"]
+album = "DAMN."
+track_number = 8
+duration_s = 177
+explicit = true
+path = '@@k\Kendrick Lamar - HUMBLE. (Clean).mp3'
+length_s = 177
+expect = "review"
+
+[[case]]
+note = "uploader tag in brackets is ignored"
+title = "Midnight City"
+artists = ["M83"]
+album = "Hurry Up, We're Dreaming"
+track_number = 2
+duration_s = 244
+path = '@@m\M83 - Midnight City [www.someblog.net] {kbps320}.mp3'
+length_s = 244
+expect = "match"
+
+[[case]]
+note = "artist - album - nn - title"
+title = "Seven Nation Army"
+artists = ["The White Stripes"]
+album = "Elephant"
+track_number = 1
+duration_s = 232
+path = '@@w\mp3\The White Stripes - Elephant - 01 - Seven Nation Army.mp3'
+length_s = 232
+expect = "match"
+
+[[case]]
+note = "self-titled track"
+title = "Bad Company"
+artists = ["Bad Company"]
+album = "Bad Company"
+track_number = 3
+duration_s = 290
+path = '@@b\Bad Company\Bad Company (1974)\03 - Bad Company.flac'
+length_s = 290
+expect = "match"
