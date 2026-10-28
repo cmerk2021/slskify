@@ -212,11 +212,24 @@ func Load(path string) (*Config, error) {
 	}
 	for name, prim := range file.QualityPresets {
 		p := cfg.QualityPresets[name]
-		if md.IsDefined("quality_presets", name, "tiers") {
-			p.Tiers = nil
+		hasRank := md.IsDefined("quality_presets", name, "rank")
+		if hasRank && md.IsDefined("quality_presets", name, "tiers") {
+			return nil, fmt.Errorf("config [quality_presets.%s]: set either rank or tiers, not both", name)
+		}
+		if hasRank || md.IsDefined("quality_presets", name, "tiers") {
+			p.Tiers, p.Rank = nil, nil
+		}
+		if hasRank && !md.IsDefined("quality_presets", name, "allowed_extensions") {
+			p.AllowedExtensions = nil
+		}
+		if hasRank && !md.IsDefined("quality_presets", name, "description") {
+			p.Description = ""
 		}
 		if err := md.PrimitiveDecode(prim, &p); err != nil {
 			return nil, fmt.Errorf("config [quality_presets.%s]: %w", name, err)
+		}
+		if p, err = p.Compile(); err != nil {
+			return nil, fmt.Errorf("config [quality_presets.%s] rank: %w", name, err)
 		}
 		cfg.QualityPresets[name] = p
 	}
@@ -355,9 +368,21 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+var builtinQualityPresets = []string{"lossless-first", "lossless-only", "mp3-best", "any-best"}
+
+// IsBuiltinQualityPreset reports whether name is one of the built-in presets.
+func IsBuiltinQualityPreset(name string) bool {
+	for _, n := range builtinQualityPresets {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
 // QualityPresetNames returns preset names, built-ins first in a stable order.
 func (c *Config) QualityPresetNames() []string {
-	return orderedNames(c.QualityPresets, []string{"lossless-first", "lossless-only", "mp3-best", "any-best"})
+	return orderedNames(c.QualityPresets, builtinQualityPresets)
 }
 
 // SpeedPresetNames returns speed preset names (slow, medium, fast first).

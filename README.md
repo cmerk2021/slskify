@@ -108,7 +108,8 @@ launch → setup (if needed) → run picker / paste URL → tracks load →
 |---|---|
 | everywhere | `ctrl+c` quit (state is saved; in-flight work is stopped cleanly) |
 | run picker | type/paste URL, `enter` load (empty URL = resume highlighted run), `↑↓`, `ctrl+s` setup |
-| pre-run | `tab` switch list, `↑↓` choose, `enter` start, `esc` back |
+| pre-run | `tab` switch list, `↑↓` choose, `enter` start, `n` new / `e` edit / `c` copy / `d` delete (twice) quality profile, `esc` back |
+| quality profile editor | `tab` next field, in the rank list: `a` add, `enter` edit, `d` delete, `shift+↑↓` or `[` `]` move, `1`–`9` quick-add a common rule; `ctrl+s` save, `esc` cancel |
 | main | `←→`/`tab` tabs, `↑↓ pgup pgdn g G`, `enter` detail, `r` review, `s` skip, `p` pause/resume, `ctrl+s` setup, `q` quit |
 | detail / review | `1`–`9` pick that rank, `enter` pick highlighted row, `s` skip, `e` edit query and re-search, `n`/`N` next/prev (review), `o` cycle sort, `x` show rejected, `p` pause, `esc` back |
 
@@ -188,8 +189,34 @@ explicit and tested:
 | `mp3-best` | MP3 only: 320 CBR > V0 > 256 > ≥ 192 |
 | `any-best` | lossless > lossy by bitrate (≥ 128) |
 
-VBR V0 (≈245 kbps average) ranks below 320 CBR. You can add your own presets
-under `[quality_presets.<name>]`.
+VBR V0 (≈245 kbps average) ranks below 320 CBR.
+
+#### Custom quality profiles
+Make your own ranking from the pre-run screen: `n` creates a profile, `e`
+edits the highlighted one, `c` copies it, and `d` (pressed twice) deletes it
+(for a built-in, `d` restores the original). The editor shows a live preview
+of how sample files would rank. Profiles are saved to the config file:
+
+```toml
+# Prefer MP3 320; take FLAC if there is no 320; then any other MP3.
+[quality_presets.mp3-first]
+rank = ["mp3 320", "flac", "mp3"]
+min_bitrate = 192          # optional lossy floor (kbps); lossless is never affected
+description = "..."        # optional; defaults to "mp3 320 > flac > mp3"
+```
+
+Each `rank` entry is one tier, best first:
+
+| Part | Values |
+|---|---|
+| format | `lossless`, `lossy`, `any`, or a format: `flac`, `alac`, `wav`, `aiff`, `ape`, `wv`, `mp3`, `aac`, `ogg`, `opus`, `wma`, `mpc`, `m4a` (AAC or ALAC). Join several with `/`, e.g. `flac/alac`. |
+| bitrate | minimum kbps, lossy only: `320`, `256+`, `>=256` |
+| mode | `cbr` or `vbr`; `v0` means VBR ≥ 220, `v2` means VBR ≥ 170 |
+
+Only formats named in `rank` are downloaded (set `allowed_extensions` to
+override). Within a tier, higher bitrate wins, and lossless files follow
+`prefer_bit_depth`/`prefer_sample_rate`. Use `slskify -q mp3-first …` or
+`quality_preset = "mp3-first"` to make a profile the default.
 
 ### Decision
 - **Auto-download** the top-ranked candidate when all of these hold:
@@ -330,6 +357,8 @@ warning = ""
 A tier matches a file when every condition it sets holds: `lossless`,
 `formats`, `min_bitrate`, and `mode` (`cbr`/`vbr`). The first matching tier
 wins. Files that pass the hard filters but match no tier rank last ("other").
+A preset sets either `tiers` or the shorter `rank` (see
+[Custom quality profiles](#custom-quality-profiles)), not both.
 
 ## Known limitations
 
