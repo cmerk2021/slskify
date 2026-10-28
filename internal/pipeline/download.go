@@ -32,7 +32,7 @@ func (r *Runner) markFailed(ts *trackState, user, path, reason string) {
 // nextCandidate returns the manual pick (once) or the best remaining
 // auto-eligible candidate. Only auto-eligible candidates are used for
 // automatic fallback; anything less certain goes back to review.
-func (r *Runner) nextCandidate(ts *trackState) *match.Candidate {
+func (r *Runner) nextCandidate(ts *trackState) (cand *match.Candidate, manual bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if ts.manual != "" {
@@ -40,16 +40,28 @@ func (r *Runner) nextCandidate(ts *trackState) *match.Candidate {
 		ts.manual = ""
 		for _, c := range ts.cands {
 			if c.Key() == key {
-				return c
+				return c, true
 			}
 		}
 	}
 	for _, c := range ts.cands {
 		if c.AutoEligible && ts.failed[c.Key()] == "" {
-			return c
+			return c, false
 		}
 	}
-	return nil
+	return nil, false
+}
+
+// alternativesLocked counts untried auto-eligible candidates other than
+// the one with key exclude. Caller holds r.mu.
+func (r *Runner) alternativesLocked(ts *trackState, exclude string) int {
+	n := 0
+	for _, c := range ts.cands {
+		if c.AutoEligible && ts.failed[c.Key()] == "" && c.Key() != exclude {
+			n++
+		}
+	}
+	return n
 }
 
 // downloadTrack drives one track through download attempts with fallback.
@@ -70,6 +82,7 @@ func (r *Runner) downloadTrack(ctx context.Context, id int64) {
 	for ctx.Err() == nil {
 		var cand *match.Candidate
 		var transferID string
+		manual := false
 		if resume {
 			resume = false
 			r.mu.Lock()
@@ -84,7 +97,7 @@ func (r *Runner) downloadTrack(ctx context.Context, id int64) {
 				r.toReview(ts, fmt.Sprintf("%d download attempts failed; pick another candidate", attempts))
 				return
 			}
-			cand = r.nextCandidate(ts)
+			cand, manual = r.nextCandidate(ts)
 			if cand == nil {
 				r.mu.Lock()
 				tried := ts.Attempts
@@ -120,7 +133,7 @@ func (r *Runner) downloadTrack(ctx context.Context, id int64) {
 			r.setState(ts, store.StateDownloading, fmt.Sprintf("attempt %d: %s from %s", ts.Attempts, shortPath(cand.Path), cand.Username))
 		}
 
-		ok, reason := r.watch(ctx, ts, transferID, cand.Username, cand.Path)
+		ok, reason, skipped := r.watch(ctx, ts, transferID, cand.Username, cand.Path, !manual)
 		if ctx.Err() != nil {
 			return // stays "downloading"; reconciled on resume
 		}
@@ -134,6 +147,11 @@ func (r *Runner) downloadTrack(ctx context.Context, id int64) {
 		r.markFailed(ts, cand.Username, cand.Path, reason)
 		r.mu.Lock()
 		ts.ChosenUser, ts.ChosenPath = cand.Username, cand.Path
+		if skipped && ts.Attempts > 0 {
+			// Skipping a slow queue for a plentiful alternative is not a
+			// failure of the track; don't spend the attempt budget on it.
+			ts.Attempts--
+		}
 		r.mu.Unlock()
 	}
 }
@@ -149,6 +167,9 @@ const (
 	verdictSucceeded
 	verdictFailed
 	verdictCancel
+	// verdictSkip: cancel a slow-queued transfer because enough other
+	// confident candidates remain.
+	verdictSkip
 )
 
 type watchState struct {
@@ -156,6 +177,9 @@ type watchState struct {
 	lastBytes    int64
 	lastProgress time.Time
 	missing      int
+	// alternatives is the number of other untried auto-eligible
+	// candidates; -1 disables the early queue skip (e.g. manual picks).
+	alternatives int
 }
 
 func (r *Runner) judge(tr *slskd.Transfer, w *watchState, now time.Time) (transferVerdict, string) {
@@ -175,6 +199,11 @@ func (r *Runner) judge(tr *slskd.Transfer, w *watchState, now time.Time) (transf
 	case slskd.StateFailed:
 		return verdictFailed, reason
 	case slskd.StateQueued:
+		d := r.opts.Download
+		if sk := d.QueueSkipTimeout.Duration; sk > 0 && w.alternatives >= 0 && w.alternatives >= d.QueueSkipMinAlternatives &&
+			now.Sub(w.queuedSince) > sk {
+			return verdictSkip, fmt.Sprintf("still queued after %s; trying another of %d confident candidates", sk.Round(time.Second), w.alternatives)
+		}
 		if qt := r.opts.Download.QueueTimeout.Duration; qt > 0 && now.Sub(w.queuedSince) > qt {
 			return verdictCancel, fmt.Sprintf("still queued after %s", qt.Round(time.Second))
 		}
@@ -191,15 +220,23 @@ func (r *Runner) judge(tr *slskd.Transfer, w *watchState, now time.Time) (transf
 
 // watch follows a transfer until it finishes. It returns ok, or a failure
 // reason (after cancelling the transfer when slskify gave up on it).
-func (r *Runner) watch(ctx context.Context, ts *trackState, id, user, path string) (bool, string) {
-	w := &watchState{queuedSince: r.now()}
+// skipped reports that the transfer was dropped early in favour of another
+// candidate. allowSkip enables that early queue skip.
+func (r *Runner) watch(ctx context.Context, ts *trackState, id, user, path string, allowSkip bool) (ok bool, reason string, skipped bool) {
+	w := &watchState{queuedSince: r.now(), alternatives: -1}
+	key := match.File{Username: user, Path: path}.Key()
 	sub := r.poller.subscribe()
 	defer r.poller.unsubscribe(sub)
 	for {
 		select {
 		case <-ctx.Done():
-			return false, ""
+			return false, "", false
 		case <-sub:
+		}
+		if allowSkip {
+			r.mu.Lock()
+			w.alternatives = r.alternativesLocked(ts, key)
+			r.mu.Unlock()
 		}
 		tr := r.poller.find(id, user, path)
 		if tr != nil {
@@ -217,13 +254,13 @@ func (r *Runner) watch(ctx context.Context, ts *trackState, id, user, path strin
 		v, reason := r.judge(tr, w, r.now())
 		switch v {
 		case verdictSucceeded:
-			return true, ""
+			return true, "", false
 		case verdictFailed:
 			r.removeTransfer(user, id)
-			return false, reason
-		case verdictCancel:
+			return false, reason, false
+		case verdictCancel, verdictSkip:
 			r.cancelTransfer(ctx, user, id)
-			return false, reason
+			return false, reason, v == verdictSkip
 		}
 	}
 }

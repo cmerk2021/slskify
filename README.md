@@ -260,6 +260,11 @@ pending → searching → ranked → downloading → done
   After `max_candidate_attempts` failures, the track goes to **needs review**
   with each failure marked. A file you pick by hand in review gets the same
   handling.
+- **Queue skip:** if a transfer is still queued after `queue_skip_timeout`
+  (default 1m) and at least `queue_skip_min_alternatives` other confident
+  (auto-eligible) candidates remain untried, it is cancelled early and the
+  next one is tried. These skips don't count toward `max_candidate_attempts`.
+  Files picked by hand in review are never skipped early.
 - **Pause** (`p`) stops dispatching new work; in-flight work finishes.
 - **Resume:** everything lives in one SQLite database. Starting without
   arguments lists past runs. Tracks that were mid-search are re-queued.
@@ -291,6 +296,8 @@ client_secret = ""
 
 [download]
 queue_timeout = "5m"            # cancel and fall back if still queued remotely
+queue_skip_timeout = "1m"       # skip earlier if enough confident alternatives remain ("0s" disables)
+queue_skip_min_alternatives = 2 # untried auto-eligible candidates needed to skip early
 stall_timeout = "3m"            # in progress with no bytes moving
 max_candidate_attempts = 3
 poll_interval = "2s"
