@@ -54,6 +54,11 @@ go install github.com/cmerk2021/slskify/cmd/slskify@latest
 slskify
 ```
 
+Prebuilt Linux binaries (amd64, arm64, armv7) are attached to each
+[GitHub release](https://github.com/cmerk2021/slskify/releases). Releases are
+built by GoReleaser when a `v*` tag is pushed. Run
+`goreleaser release --snapshot --clean` to build locally.
+
 If credentials are missing, the setup screen opens. It asks for the slskd URL
 and API key, and the Spotify client ID and secret. It **tests both connections
 live** and saves the config (mode `0600`) only when both tests pass. Re-open
