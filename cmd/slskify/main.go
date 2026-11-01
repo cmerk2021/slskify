@@ -21,6 +21,13 @@ import (
 	"github.com/cmerk2021/slskify/internal/tui"
 )
 
+// Set at build time via -ldflags (see .goreleaser.yaml).
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 type globalFlags struct {
 	configPath string
 	dbPath     string
@@ -46,6 +53,7 @@ instance for each track, auto-downloads confident matches and collects the
 rest in a review queue.
 
 Run without arguments to pick a past run or paste a URL.`,
+		Version:       fmt.Sprintf("%s (commit %s, built %s)", version, commit, date),
 		Args:          cobra.MaximumNArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
