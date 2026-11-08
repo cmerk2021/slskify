@@ -19,6 +19,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/cmerk2021/slskify/internal/match"
+	"github.com/cmerk2021/slskify/internal/organize"
 )
 
 // Duration is a time.Duration that reads/writes TOML strings like "5m".
@@ -88,6 +89,19 @@ type DownloadConfig struct {
 	PollInterval         Duration `toml:"poll_interval"`
 }
 
+// OrganizeConfig controls post-download organization. It only works when
+// slskd runs on the same machine (its download directory must be readable
+// here); leave it disabled for a remote slskd.
+type OrganizeConfig struct {
+	Enabled bool `toml:"enabled"`
+	// DownloadsDir is slskd's download directory as seen from this machine.
+	DownloadsDir string `toml:"downloads_dir"`
+	// MusicDir is the library root files are moved into.
+	MusicDir string `toml:"music_dir"`
+	// PathTemplate is the file path under MusicDir, without extension.
+	PathTemplate string `toml:"path_template"`
+}
+
 // Config is the full configuration.
 type Config struct {
 	Slskd   SlskdConfig   `toml:"slskd"`
@@ -96,6 +110,7 @@ type Config struct {
 	QualityPreset  string                         `toml:"quality_preset"`
 	SpeedPreset    string                         `toml:"speed_preset"`
 	Download       DownloadConfig                 `toml:"download"`
+	Organize       OrganizeConfig                 `toml:"organize"`
 	Match          match.Config                   `toml:"match"`
 	QualityPresets map[string]match.QualityPolicy `toml:"quality_presets"`
 	SpeedPresets   map[string]SpeedPreset         `toml:"speed_presets"`
@@ -128,6 +143,7 @@ func Default() *Config {
 			MaxCandidateAttempts:     3,
 			PollInterval:             D(2 * time.Second),
 		},
+		Organize:       OrganizeConfig{PathTemplate: organize.DefaultTemplate},
 		Match:          match.DefaultConfig(),
 		QualityPresets: match.DefaultQualityPresets(),
 		SpeedPresets:   DefaultSpeedPresets(),
@@ -196,18 +212,21 @@ func Load(path string) (*Config, error) {
 		QualityPreset  string                    `toml:"quality_preset"`
 		SpeedPreset    string                    `toml:"speed_preset"`
 		Download       toml.Primitive            `toml:"download"`
+		Organize       OrganizeConfig            `toml:"organize"`
 		Match          toml.Primitive            `toml:"match"`
 		QualityPresets map[string]toml.Primitive `toml:"quality_presets"`
 		SpeedPresets   map[string]toml.Primitive `toml:"speed_presets"`
 	}
 	file.Slskd, file.Spotify = cfg.Slskd, cfg.Spotify
 	file.QualityPreset, file.SpeedPreset = cfg.QualityPreset, cfg.SpeedPreset
+	file.Organize = cfg.Organize
 	md, err := toml.Decode(string(b), &file)
 	if err != nil {
 		return nil, fmt.Errorf("config %s: %w", path, err)
 	}
 	cfg.Slskd, cfg.Spotify = file.Slskd, file.Spotify
 	cfg.QualityPreset, cfg.SpeedPreset = file.QualityPreset, file.SpeedPreset
+	cfg.Organize = file.Organize
 	if md.IsDefined("download") {
 		if err := md.PrimitiveDecode(file.Download, &cfg.Download); err != nil {
 			return nil, fmt.Errorf("config [download]: %w", err)
@@ -373,10 +392,49 @@ func (c *Config) Validate() error {
 	if c.Download.QueueSkipMinAlternatives < 1 {
 		errs = append(errs, "download.queue_skip_min_alternatives must be >= 1")
 	}
+	if err := c.Organize.Validate(); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if len(errs) > 0 {
 		return errors.New("invalid config: " + strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// Validate checks the settings that don't depend on the filesystem. The
+// directories themselves are checked when a run starts (organize.CheckDirs).
+func (o OrganizeConfig) Validate() error {
+	if !o.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(o.DownloadsDir) == "" {
+		return errors.New("organize.downloads_dir is required when organize.enabled = true")
+	}
+	if strings.TrimSpace(o.MusicDir) == "" {
+		return errors.New("organize.music_dir is required when organize.enabled = true")
+	}
+	if strings.TrimSpace(o.PathTemplate) != "" {
+		if err := organize.ValidateTemplate(o.PathTemplate); err != nil {
+			return fmt.Errorf("organize.path_template: %w", err)
+		}
+	}
+	return nil
+}
+
+// SaveOrganize writes the [organize] section to the config file at path,
+// leaving everything else untouched. (Comments are not preserved.)
+func SaveOrganize(path string, o OrganizeConfig) error {
+	if err := o.Validate(); err != nil {
+		return err
+	}
+	return editFile(path, func(m map[string]any) {
+		m["organize"] = map[string]any{
+			"enabled":       o.Enabled,
+			"downloads_dir": strings.TrimSpace(o.DownloadsDir),
+			"music_dir":     strings.TrimSpace(o.MusicDir),
+			"path_template": strings.TrimSpace(o.PathTemplate),
+		}
+	})
 }
 
 var builtinQualityPresets = []string{"lossless-first", "lossless-only", "mp3-best", "any-best"}

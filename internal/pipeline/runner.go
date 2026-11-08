@@ -10,7 +10,9 @@ import (
 
 	"github.com/cmerk2021/slskify/internal/config"
 	"github.com/cmerk2021/slskify/internal/match"
+	"github.com/cmerk2021/slskify/internal/organize"
 	"github.com/cmerk2021/slskify/internal/slskd"
+	"github.com/cmerk2021/slskify/internal/spotify"
 	"github.com/cmerk2021/slskify/internal/store"
 )
 
@@ -58,6 +60,16 @@ type Options struct {
 	Policy   match.QualityPolicy
 	Speed    config.SpeedPreset
 	Download config.DownloadConfig
+	// Organizer, when set, tags and moves each finished download (only
+	// possible when slskd runs on this machine). Nil leaves files where
+	// slskd put them.
+	Organizer Organizer
+}
+
+// Organizer post-processes a finished download. remotePath is the path the
+// file had on the peer; size is its byte size (0 if unknown).
+type Organizer interface {
+	Organize(ctx context.Context, t spotify.Track, remotePath string, size int64) (organize.Result, error)
 }
 
 type trackState struct {
@@ -243,6 +255,15 @@ func (r *Runner) reconcile(ts *trackState, transfers []slskd.Transfer) {
 	state, reason := tr.Status()
 	switch state {
 	case slskd.StateSucceeded:
+		if r.opts.Organizer != nil {
+			// Let a download worker pick it up so the file gets organized.
+			if ts.TransferID == "" {
+				ts.TransferID = tr.ID
+			}
+			ts.resumeTransfer = true
+			r.downloadQ.PushFront(ts.ID)
+			return
+		}
 		r.setState(ts, store.StateDone, "downloaded (completed while slskify was closed)")
 	case slskd.StateFailed:
 		r.markFailed(ts, ts.ChosenUser, ts.ChosenPath, reason)

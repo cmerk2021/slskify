@@ -144,6 +144,20 @@ func (c *Client) Ping(ctx context.Context) error {
 	return err
 }
 
+// DownloadsDir returns slskd's configured download directory, as seen by
+// slskd (a container path when slskd runs in Docker).
+func (c *Client) DownloadsDir(ctx context.Context) (string, error) {
+	var v struct {
+		Directories struct {
+			Downloads string `json:"downloads"`
+		} `json:"directories"`
+	}
+	if _, err := c.do(ctx, http.MethodGet, "/options", nil, &v); err != nil {
+		return "", err
+	}
+	return v.Directories.Downloads, nil
+}
+
 func newID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])

@@ -229,6 +229,60 @@ func (c *Client) Ping(ctx context.Context) error {
 	return c.get(ctx, "/tracks/4uLU6hMCjMI75M1A2tKUQC", nil, &t)
 }
 
+// TrackByID fetches one track with full album information.
+func (c *Client) TrackByID(ctx context.Context, id string) (Track, error) {
+	var t apiTrack
+	if err := c.get(ctx, "/tracks/"+url.PathEscape(id), nil, &t); err != nil {
+		return Track{}, mapEntityError(err, KindTrack)
+	}
+	return toTrack(&t, nil), nil
+}
+
+// ArtistGenres returns the genres Spotify lists for an artist (often none).
+func (c *Client) ArtistGenres(ctx context.Context, id string) ([]string, error) {
+	var a apiArtist
+	if err := c.get(ctx, "/artists/"+url.PathEscape(id), nil, &a); err != nil {
+		return nil, err
+	}
+	return a.Genres, nil
+}
+
+// maxImageBytes bounds a downloaded cover image.
+const maxImageBytes = 20 << 20
+
+// Image downloads an image (e.g. Track.CoverURL). Spotify's image CDN needs
+// no authentication.
+func (c *Client) Image(ctx context.Context, imageURL string) ([]byte, error) {
+	u, err := url.Parse(imageURL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+		return nil, fmt.Errorf("invalid image URL %q", imageURL)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	hc := c.HTTP
+	if hc == nil {
+		hc = &http.Client{Timeout: 30 * time.Second}
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("downloading cover art: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("downloading cover art: HTTP %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxImageBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("downloading cover art: %w", err)
+	}
+	if len(b) > maxImageBytes {
+		return nil, errors.New("cover art image is too large")
+	}
+	return b, nil
+}
+
 // Resolve turns a URL/URI into a Collection of tracks.
 func (c *Client) Resolve(ctx context.Context, raw string) (*Collection, error) {
 	kind, id, err := ParseURL(raw)

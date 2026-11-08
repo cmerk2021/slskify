@@ -315,3 +315,50 @@ func TestErrorMapping(t *testing.T) {
 		})
 	}
 }
+
+func TestTrackByIDGenresAndImage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/tracks/t1":
+			j := trackJSON("t1", "Song", 3)
+			j["artists"] = []map[string]any{{"id": "a1", "name": "Artist"}, {"id": "a2", "name": "Feat"}}
+			j["album"].(map[string]any)["id"] = "al1"
+			j["album"].(map[string]any)["total_tracks"] = 12
+			j["album"].(map[string]any)["images"] = []map[string]any{
+				{"url": "SMALL", "width": 64, "height": 64}, {"url": "BIG", "width": 640, "height": 640}}
+			writeJSON(w, j)
+		case "/v1/artists/a1":
+			writeJSON(w, map[string]any{"id": "a1", "name": "Artist", "genres": []string{"indie pop"}})
+		case "/img":
+			if r.Header.Get("Authorization") != "" {
+				t.Error("token sent to image host")
+			}
+			w.Write([]byte("JPEG"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := newTestClient(srv)
+	ctx := context.Background()
+	tr, err := c.TrackByID(ctx, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.AlbumID != "al1" || tr.TotalTracks != 12 || tr.CoverURL != "BIG" || tr.ReleaseDate != "2014-05-01" ||
+		len(tr.ArtistIDs) != 2 || tr.ArtistIDs[0] != "a1" {
+		t.Fatalf("track %+v", tr)
+	}
+	if g, err := c.ArtistGenres(ctx, "a1"); err != nil || len(g) != 1 || g[0] != "indie pop" {
+		t.Fatalf("genres %v %v", g, err)
+	}
+	if b, err := c.Image(ctx, srv.URL+"/img"); err != nil || string(b) != "JPEG" {
+		t.Fatalf("image %q %v", b, err)
+	}
+	if _, err := c.Image(ctx, srv.URL+"/missing"); err == nil {
+		t.Fatal("404 image accepted")
+	}
+	if _, err := c.Image(ctx, "file:///etc/passwd"); err == nil {
+		t.Fatal("non-http image URL accepted")
+	}
+}

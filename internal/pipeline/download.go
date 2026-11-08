@@ -138,10 +138,7 @@ func (r *Runner) downloadTrack(ctx context.Context, id int64) {
 			return // stays "downloading"; reconciled on resume
 		}
 		if ok {
-			r.mu.Lock()
-			ts.progress = nil
-			r.mu.Unlock()
-			r.setState(ts, store.StateDone, "downloaded "+shortPath(cand.Path))
+			r.finishDownload(ctx, ts, cand)
 			return
 		}
 		r.markFailed(ts, cand.Username, cand.Path, reason)
@@ -154,6 +151,43 @@ func (r *Runner) downloadTrack(ctx context.Context, id int64) {
 		}
 		r.mu.Unlock()
 	}
+}
+
+// finishDownload marks a successful download done, organizing the file
+// first when an Organizer is configured.
+func (r *Runner) finishDownload(ctx context.Context, ts *trackState, cand *match.Candidate) {
+	r.mu.Lock()
+	size := cand.Size
+	if ts.progress != nil && ts.progress.Size > 0 {
+		size = ts.progress.Size
+	}
+	ts.progress = nil
+	track := ts.Track.Track
+	r.mu.Unlock()
+	if r.opts.Organizer == nil {
+		r.setState(ts, store.StateDone, "downloaded "+shortPath(cand.Path))
+		return
+	}
+	r.setState(ts, store.StateDownloading, "organizing "+shortPath(cand.Path))
+	res, err := r.opts.Organizer.Organize(ctx, track, cand.Path, size)
+	if err != nil && ctx.Err() != nil {
+		return // stays "downloading"; organized again on resume
+	}
+	// A successful result is recorded even during shutdown: the file has
+	// already left the downloads directory.
+	if err != nil {
+		r.addError(fmt.Sprintf("%s – %s: not organized: %v", track.PrimaryArtist(), track.Title, err))
+		r.setState(ts, store.StateDone, "downloaded "+shortPath(cand.Path)+"; not organized: "+err.Error())
+		return
+	}
+	for _, w := range res.Warnings {
+		r.addError(fmt.Sprintf("%s – %s: %s", track.PrimaryArtist(), track.Title, w))
+	}
+	reason := "saved to " + res.Path
+	if len(res.Warnings) > 0 {
+		reason += " (" + res.Warnings[0] + ")"
+	}
+	r.setState(ts, store.StateDone, reason)
 }
 
 // transferVerdict is what to do about a transfer after a poll. Keeping this

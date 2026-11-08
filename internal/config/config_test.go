@@ -151,3 +151,45 @@ func TestValidateCatchesBadPreset(t *testing.T) {
 		t.Fatal("want error")
 	}
 }
+
+func TestOrganizeConfig(t *testing.T) {
+	if d := Default(); d.Organize.Enabled || d.Organize.PathTemplate == "" {
+		t.Fatalf("default organize %+v", d.Organize)
+	}
+	path := filepath.Join(t.TempDir(), "c.toml")
+	os.WriteFile(path, []byte("[organize]\nenabled = true\ndownloads_dir = \"/dl\"\nmusic_dir = \"~/Music\"\n"), 0o600)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := cfg.Organize; !o.Enabled || o.DownloadsDir != "/dl" || o.MusicDir != "~/Music" || o.PathTemplate == "" {
+		t.Fatalf("loaded %+v", o)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Organize.MusicDir = ""
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "music_dir") {
+		t.Fatalf("missing music_dir: %v", err)
+	}
+	cfg.Organize = OrganizeConfig{Enabled: true, DownloadsDir: "a", MusicDir: "b", PathTemplate: "{bogus}"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("bad template accepted")
+	}
+	// Disabled settings are not validated (remote slskd).
+	cfg.Organize.Enabled = false
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveOrganize(path, OrganizeConfig{Enabled: false, DownloadsDir: " /x ", MusicDir: "/m", PathTemplate: "{title}"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := cfg.Organize; o.Enabled || o.DownloadsDir != "/x" || o.PathTemplate != "{title}" {
+		t.Fatalf("after save %+v", o)
+	}
+}
