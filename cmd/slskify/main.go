@@ -200,15 +200,57 @@ func dryRun(ctx context.Context, w io.Writer, a *app.App, url string, o dryRunOp
 		Slskd: a.Slskd, Matcher: a.Matcher(), Policy: pol, Options: pipeline.SearchOptionsFor(sp),
 		OnQuery: func(q string) { fmt.Fprintf(w, "       searching: %q\n", q) },
 	}
-	tally := map[match.Outcome]int{}
-	n := 0
-	for i, t := range coll.Tracks {
+	var sel []int
+	for i := range coll.Tracks {
 		if o.only > 0 && i+1 != o.only {
 			continue
 		}
-		if o.limit > 0 && n >= o.limit {
+		if o.limit > 0 && len(sel) >= o.limit {
 			break
 		}
+		sel = append(sel, i)
+	}
+	// Tracks sharing an album are searched once with an album query, as in
+	// a real run; tracks it doesn't match confidently get their own search
+	// with the album results merged in.
+	targets := make([]match.Target, len(sel))
+	for j, i := range sel {
+		targets[j] = pipeline.TargetOf(coll.Tracks[i])
+	}
+	type albumHit struct {
+		res *pipeline.AlbumResult
+		idx int
+	}
+	albumOf := map[int]albumHit{}
+	groups := pipeline.AlbumGroups(s.Matcher, targets)
+	for _, g := range groups {
+		var gts []match.Target
+		for _, j := range g {
+			gts = append(gts, targets[j])
+		}
+		fmt.Fprintf(w, "\nalbum %q: %d tracks, one shared search\n", gts[0].Album, len(g))
+		res, err := s.SearchAlbum(ctx, gts)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			fmt.Fprintf(w, "       ERROR: %v (searching tracks individually)\n", err)
+			continue
+		}
+		auto := 0
+		for k, j := range g {
+			albumOf[sel[j]] = albumHit{&res, k}
+			if res.Decisions[k].Outcome == match.OutcomeAuto {
+				auto++
+			}
+		}
+		fmt.Fprintf(w, "       %d files, %d of %d tracks matched confidently, %d folder(s) with several tracks\n",
+			len(res.Files), auto, len(g), len(res.Folders))
+	}
+	tally := map[match.Outcome]int{}
+	n := 0
+	for _, i := range sel {
+		t := coll.Tracks[i]
 		n++
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -219,7 +261,16 @@ func dryRun(ctx context.Context, w io.Writer, a *app.App, url string, o dryRunOp
 			fmt.Fprintf(w, " (%d)", t.Year)
 		}
 		fmt.Fprintf(w, " · %s · track %d · %d:%02d · ISRC %s\n", t.AlbumType, t.TrackNumber, t.DurationMs/60000, t.DurationMs/1000%60, orDash(t.ISRC))
-		res, err := s.Search(ctx, pipeline.TargetOf(t), "")
+		var res pipeline.SearchResult
+		var err error
+		if h, ok := albumOf[i]; ok && h.res.Decisions[h.idx].Outcome == match.OutcomeAuto {
+			fmt.Fprintf(w, "       from album search %q\n", h.res.Query)
+			res = pipeline.SearchResult{Queries: []string{h.res.Query}, Files: h.res.Files, Decision: h.res.Decisions[h.idx]}
+		} else if ok {
+			res, err = s.SearchWith(ctx, pipeline.TargetOf(t), "", h.res.Files, h.res.Folders)
+		} else {
+			res, err = s.Search(ctx, pipeline.TargetOf(t), "")
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()

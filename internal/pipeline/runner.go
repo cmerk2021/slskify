@@ -71,6 +71,14 @@ type trackState struct {
 	// resumeTransfer: on resume, adopt this existing transfer instead of
 	// enqueueing again.
 	resumeTransfer bool
+	// Album grouping (in memory only). albumTried: the track already took
+	// part in an album search. seed: that search's files, merged into the
+	// track's own search. folders: album-folder preference (see
+	// match.EvaluateWithFolders). albumQuery: shown with the track's queries.
+	albumTried bool
+	seed       []match.File
+	folders    map[string]int
+	albumQuery string
 }
 
 // TrackView is an immutable snapshot of one track for frontends.
@@ -427,10 +435,28 @@ func (r *Runner) searchTrack(ctx context.Context, id int64) {
 		r.mu.Unlock()
 		return
 	}
+	group := r.claimAlbumLocked(ts)
+	if len(group) == 0 {
+		group = []*trackState{ts}
+		r.claimLocked(ts)
+	}
 	custom := ts.Query
 	target := TargetOf(ts.Track.Track)
+	seed, folders, albumQuery := ts.seed, ts.folders, ts.albumQuery
+	if custom != "" {
+		seed = nil
+	}
+	var claimed []store.Track
+	for _, g := range group {
+		claimed = append(claimed, g.Track)
+	}
 	r.mu.Unlock()
-	if !r.setState(ts, store.StateSearching, "") {
+	for _, t := range claimed {
+		r.persistTrack(t)
+	}
+	r.notify()
+	if len(group) > 1 {
+		r.searchAlbum(ctx, group)
 		return
 	}
 
@@ -448,7 +474,7 @@ func (r *Runner) searchTrack(ctx context.Context, id int64) {
 	var res SearchResult
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
-		res, err = s.Search(ctx, target, custom)
+		res, err = s.SearchWith(ctx, target, custom, seed, folders)
 		if err == nil || ctx.Err() != nil {
 			break
 		}
@@ -465,7 +491,109 @@ func (r *Runner) searchTrack(ctx context.Context, id int64) {
 		r.setState(ts, store.StateFailed, err.Error())
 		return
 	}
-	r.applyDecision(ts, res.Decision, res.Queries, custom != "")
+	queries := res.Queries
+	if albumQuery != "" && custom == "" {
+		queries = append([]string{albumQuery}, queries...)
+	}
+	r.mu.Lock()
+	ts.seed = nil
+	r.mu.Unlock()
+	r.applyDecision(ts, res.Decision, queries, custom != "")
+}
+
+// claimLocked moves a pending track to searching. Caller holds r.mu and
+// persists/notifies afterwards. Claiming under the lock keeps two search
+// workers from taking the same track when album groups are formed.
+func (r *Runner) claimLocked(ts *trackState) {
+	ts.State, ts.Reason = store.StateSearching, ""
+	ts.progress = nil
+}
+
+// claimAlbumLocked claims ts and every other pending track of the same
+// album for one shared album search. It returns nil (claiming nothing)
+// when fewer than two tracks qualify. Tracks with a user-edited query or
+// that already took part in an album search are left alone. Caller holds
+// r.mu.
+func (r *Runner) claimAlbumLocked(ts *trackState) []*trackState {
+	eligible := func(t *trackState) bool {
+		return t.State == store.StatePending && t.Query == "" && !t.albumTried
+	}
+	if !eligible(ts) {
+		return nil
+	}
+	target := TargetOf(ts.Track.Track)
+	key := match.AlbumKey(target)
+	if key == "" || r.opts.Matcher.AlbumQuery(target) == "" {
+		return nil
+	}
+	group := []*trackState{ts}
+	for _, t := range r.tracks {
+		if t != ts && eligible(t) && match.AlbumKey(TargetOf(t.Track.Track)) == key {
+			group = append(group, t)
+		}
+	}
+	if len(group) < 2 {
+		return nil
+	}
+	for _, t := range group {
+		t.albumTried = true
+		r.claimLocked(t)
+	}
+	return group
+}
+
+// searchAlbum runs one album search for a group of claimed tracks. Tracks
+// it matches confidently are ranked straight away; the rest go back to the
+// front of the search queue for their own queries, with the album results
+// merged in.
+func (r *Runner) searchAlbum(ctx context.Context, group []*trackState) {
+	targets := make([]match.Target, len(group))
+	for i, ts := range group {
+		targets[i] = TargetOf(ts.Track.Track)
+	}
+	s := &Searcher{
+		Slskd: r.sl, Matcher: r.opts.Matcher, Policy: r.opts.Policy,
+		Options:      SearchOptionsFor(r.opts.Speed),
+		BeforeSearch: r.searchRate.Wait,
+		OnQuery: func(q string) {
+			r.mu.Lock()
+			for _, ts := range group {
+				ts.activity = "searching album: " + q
+			}
+			r.mu.Unlock()
+			r.notify()
+		},
+	}
+	res, err := s.SearchAlbum(ctx, targets)
+	if ctx.Err() != nil {
+		return // shutdown() resets to pending
+	}
+	if err != nil {
+		r.addError(fmt.Sprintf("album %q: %v (searching tracks individually)", targets[0].Album, err))
+	}
+	var retry []int64
+	for i, ts := range group {
+		if err == nil && res.Decisions[i].Outcome == match.OutcomeAuto {
+			r.mu.Lock()
+			ts.folders, ts.albumQuery = res.Folders, res.Query
+			r.mu.Unlock()
+			r.applyDecision(ts, res.Decisions[i], []string{res.Query}, false)
+			continue
+		}
+		reason := "album search failed; searching individually"
+		r.mu.Lock()
+		if err == nil {
+			ts.seed, ts.folders, ts.albumQuery = res.Files, res.Folders, res.Query
+			reason = "not confidently matched by album search; searching individually"
+		}
+		r.mu.Unlock()
+		if r.setState(ts, store.StatePending, reason) {
+			retry = append(retry, ts.ID)
+		}
+	}
+	for i := len(retry) - 1; i >= 0; i-- {
+		r.searchQ.PushFront(retry[i])
+	}
 }
 
 // SearchOptionsFor converts a speed preset into slskd search options.

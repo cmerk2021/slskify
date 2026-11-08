@@ -148,6 +148,26 @@ found:
 Punctuation is removed because Soulseek search is token-based. You can edit
 the query in review.
 
+### Album grouping
+Peers usually share whole albums in one folder (e.g.
+`/music/Nightly/THE VOID/`). When two or more pending tracks of a run come
+from the same album (an album link, or a playlist with several songs from one
+album), they share **one** search:
+1. `album-artist album` is searched once, with edition labels like
+   "(Deluxe Edition)" dropped. For compilations and Various Artists releases
+   the album name alone is used, and only if it is distinctive.
+2. Every track of the album is matched against those results. Tracks with a
+   confident match are queued for download straight away, with no search of
+   their own.
+3. The remaining tracks run the usual per-track queries, and the album
+   results are merged into theirs.
+
+Within a quality tier, files from a folder that supplies several of the
+album's tracks rank ahead of other peers. This keeps an album together on as
+few peers as possible. Quality still comes first: a folder of MP3s never beats
+a confident FLAC under `lossless-first`. Re-searches with an edited query are
+never grouped. `dry-run` groups tracks the same way.
+
 ### Hard filters
 These run before scoring. Rejected files are kept, with the reason, and shown
 for context when nothing is found.
@@ -184,8 +204,10 @@ explicit and tested:
 2. **Quality tier** (the policy's ordered tiers). Within lossless, the
    preferred bit depth and sample rate come first (16-bit/44.1 kHz by
    default).
-3. **Confidence**, compared in `confidence_bucket` (5-point) buckets.
-4. **Peer quality:** free upload slot, then upload speed, then shorter queue.
+3. **Album folder:** for grouped album tracks, folders that supply more of the
+   album come first (see [Album grouping](#album-grouping)).
+4. **Confidence**, compared in `confidence_bucket` (5-point) buckets.
+5. **Peer quality:** free upload slot, then upload speed, then shorter queue.
 
 | Preset | Order |
 |---|---|
@@ -391,7 +413,9 @@ A preset sets either `tiers` or the shorter `rank` (see
 - Queue-position-aware waiting, instead of a fixed `queue_timeout`.
 - Cross-run dedupe. Tracks are already stored with Spotify ID and ISRC.
 - Split-pane layout on wide terminals.
-- Grabbing a whole album folder from one peer.
+- Downloading a whole album folder as one batch. Album tracks already share
+  one search and prefer the same folder, but each file is still queued
+  separately.
 
 ## Development
 

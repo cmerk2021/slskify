@@ -20,7 +20,7 @@ func (r *Runner) markFailed(ts *trackState, user, path, reason string) {
 	for _, c := range ts.cands {
 		files = append(files, c.File)
 	}
-	d := r.opts.Matcher.Evaluate(TargetOf(ts.Track.Track), files, r.opts.Policy, ts.failed)
+	d := r.opts.Matcher.EvaluateWithFolders(TargetOf(ts.Track.Track), files, r.opts.Policy, ts.failed, ts.folders)
 	ts.cands = d.Candidates
 	ts.AutoCount, ts.Passed = d.AutoCount, d.Passed
 	ts.TransferID, ts.TransferUser, ts.TransferPath = "", "", ""

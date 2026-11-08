@@ -120,6 +120,14 @@ type Decision struct {
 // Evaluate scores, filters, ranks and decides. failed maps File.Key() to a
 // download-failure reason; such candidates are never auto-selected.
 func (m *Matcher) Evaluate(t Target, files []File, p QualityPolicy, failed map[string]string) Decision {
+	return m.EvaluateWithFolders(t, files, p, failed, nil)
+}
+
+// EvaluateWithFolders is Evaluate with an album-folder preference: folders
+// maps FolderKey → number of the album's tracks that folder provides (see
+// FolderCoverage). Within a quality tier, candidates from folders covering
+// more tracks rank first. Confidence gates and tiers are unaffected.
+func (m *Matcher) EvaluateWithFolders(t Target, files []File, p QualityPolicy, failed map[string]string, folders map[string]int) Decision {
 	prep := m.prepare(t)
 	var passed, rejected []*Candidate
 	seen := map[string]bool{}
@@ -175,8 +183,8 @@ func (m *Matcher) Evaluate(t Target, files []File, p QualityPolicy, failed map[s
 			groupC = append(groupC, c)
 		}
 	}
-	rankByQuality(groupA, p, cfg.ConfidenceBucket)
-	rankByQuality(groupB, p, cfg.ConfidenceBucket)
+	rankByQualityFolders(groupA, p, cfg.ConfidenceBucket, folders)
+	rankByQualityFolders(groupB, p, cfg.ConfidenceBucket, folders)
 	rankByQuality(groupF, p, cfg.ConfidenceBucket)
 	rankByConfidence(groupC)
 	rankByConfidence(rejected)
