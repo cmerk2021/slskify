@@ -26,6 +26,13 @@ type Track struct {
 	DurationMs  int      `json:"duration_ms"`
 	Year        int      `json:"year,omitempty"`
 	Explicit    bool     `json:"explicit"`
+	// Used to tag files after download. Runs saved by older versions lack
+	// these; they are fetched again when needed.
+	AlbumID     string   `json:"album_id,omitempty"`
+	ArtistIDs   []string `json:"artist_ids,omitempty"`
+	ReleaseDate string   `json:"release_date,omitempty"` // YYYY, YYYY-MM or YYYY-MM-DD
+	TotalTracks int      `json:"total_tracks,omitempty"`
+	CoverURL    string   `json:"cover_url,omitempty"` // largest album image
 }
 
 // PrimaryArtist returns the first credited artist.
@@ -59,7 +66,15 @@ type Collection struct {
 // ---- wire types (subset of the Web API objects we need) ----
 
 type apiArtist struct {
-	Name string `json:"name"`
+	ID     string   `json:"id"`
+	Name   string   `json:"name"`
+	Genres []string `json:"genres"` // full artist objects only
+}
+
+type apiImage struct {
+	URL    string `json:"url"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
 }
 
 type apiAlbumInfo struct {
@@ -67,7 +82,23 @@ type apiAlbumInfo struct {
 	Name        string      `json:"name"`
 	AlbumType   string      `json:"album_type"`
 	ReleaseDate string      `json:"release_date"`
+	TotalTracks int         `json:"total_tracks"`
 	Artists     []apiArtist `json:"artists"`
+	Images      []apiImage  `json:"images"`
+}
+
+// largestImage returns the URL of the widest image ("" if none).
+func largestImage(imgs []apiImage) string {
+	best := -1
+	for i, im := range imgs {
+		if im.URL != "" && (best < 0 || im.Width > imgs[best].Width) {
+			best = i
+		}
+	}
+	if best < 0 {
+		return ""
+	}
+	return imgs[best].URL
 }
 
 type apiTrack struct {
@@ -124,6 +155,16 @@ type apiPlaylist struct {
 	} `json:"owner"`
 }
 
+func artistIDs(as []apiArtist) []string {
+	var out []string
+	for _, a := range as {
+		if a.Name != "" {
+			out = append(out, a.ID)
+		}
+	}
+	return out
+}
+
 func artistNames(as []apiArtist) []string {
 	out := make([]string, 0, len(as))
 	for _, a := range as {
@@ -160,6 +201,7 @@ func toTrack(t *apiTrack, fallback *apiAlbumInfo) Track {
 		ISRC:        t.ExternalIDs.ISRC,
 		Title:       t.Name,
 		Artists:     artistNames(t.Artists),
+		ArtistIDs:   artistIDs(t.Artists),
 		TrackNumber: t.TrackNumber,
 		DiscNumber:  t.DiscNumber,
 		DurationMs:  t.DurationMs,
@@ -169,6 +211,10 @@ func toTrack(t *apiTrack, fallback *apiAlbumInfo) Track {
 		out.Album = alb.Name
 		out.AlbumType = alb.AlbumType
 		out.Year = yearOf(alb.ReleaseDate)
+		out.AlbumID = alb.ID
+		out.ReleaseDate = alb.ReleaseDate
+		out.TotalTracks = alb.TotalTracks
+		out.CoverURL = largestImage(alb.Images)
 		if len(alb.Artists) > 0 {
 			out.AlbumArtist = alb.Artists[0].Name
 		}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/cmerk2021/slskify/internal/config"
 	"github.com/cmerk2021/slskify/internal/match"
+	"github.com/cmerk2021/slskify/internal/organize"
 	"github.com/cmerk2021/slskify/internal/pipeline"
 	"github.com/cmerk2021/slskify/internal/slskd"
 	"github.com/cmerk2021/slskify/internal/spotify"
@@ -86,13 +87,62 @@ func (a *App) NewRunner(ctx context.Context, run store.Run) (*pipeline.Runner, e
 	pol, qn := a.Policy(run.QualityPreset)
 	sp, sn := a.Speed(run.SpeedPreset)
 	run.QualityPreset, run.SpeedPreset = qn, sn
-	r := pipeline.New(a.Slskd, a.Store, run, pipeline.Options{
+	opts := pipeline.Options{
 		Matcher: a.Matcher(), Policy: pol, Speed: sp, Download: a.Cfg.Download,
-	})
+	}
+	if a.Cfg.Organize.Enabled {
+		org, err := a.Organizer()
+		if err != nil {
+			return nil, fmt.Errorf("organize: %w (fix it in setup or set organize.enabled = false)", err)
+		}
+		opts.Organizer = org
+	}
+	r := pipeline.New(a.Slskd, a.Store, run, opts)
 	if err := r.Load(ctx); err != nil {
 		return nil, err
 	}
 	return r, nil
+}
+
+// Organizer builds the post-download organizer from the [organize] config.
+func (a *App) Organizer() (*organize.Organizer, error) {
+	oc := a.Cfg.Organize
+	return organize.New(oc.DownloadsDir, oc.MusicDir, oc.PathTemplate, a.Spotify, nil)
+}
+
+// CheckOrganize validates organize settings, including the directories,
+// without saving them.
+func (a *App) CheckOrganize(oc config.OrganizeConfig) error {
+	if !oc.Enabled {
+		return nil
+	}
+	if err := organize.CheckDirs(oc.DownloadsDir, oc.MusicDir); err != nil {
+		return err
+	}
+	return oc.Validate()
+}
+
+// ApplyOrganize saves the [organize] section and updates cfg. New runs and
+// resumed runs pick it up; a run already in progress keeps its settings.
+func (a *App) ApplyOrganize(oc config.OrganizeConfig) error {
+	if strings.TrimSpace(oc.PathTemplate) == "" {
+		oc.PathTemplate = organize.DefaultTemplate
+	}
+	if err := config.SaveOrganize(a.CfgPath, oc); err != nil {
+		return fmt.Errorf("saving config: %w", err)
+	}
+	oc.DownloadsDir, oc.MusicDir = strings.TrimSpace(oc.DownloadsDir), strings.TrimSpace(oc.MusicDir)
+	oc.PathTemplate = strings.TrimSpace(oc.PathTemplate)
+	a.Cfg.Organize = oc
+	return nil
+}
+
+// SlskdDownloadsDir asks slskd for its configured download directory (as
+// slskd sees it; inside Docker this differs from the host path).
+func (a *App) SlskdDownloadsDir(ctx context.Context, cr config.Credentials) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return slskd.NewClient(cr.SlskdURL, cr.SlskdAPIKey, 1).DownloadsDir(ctx)
 }
 
 // ConnResult is the outcome of a live connection test.

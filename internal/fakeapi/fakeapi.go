@@ -124,6 +124,8 @@ func (s *Server) spotify(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.NotFound(w, r)
+	case strings.HasPrefix(p, "/artists/"):
+		writeJSON(w, map[string]any{"id": strings.TrimPrefix(p, "/artists/"), "name": "Fake Artist", "genres": []string{}})
 	default:
 		w.WriteHeader(http.StatusNotFound)
 		writeJSON(w, map[string]any{"error": map[string]any{"status": 404, "message": "Resource not found"}})
@@ -191,6 +193,8 @@ func (s *Server) slskd(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case p == "/application":
 		writeJSON(w, map[string]any{"version": "fake"})
+	case p == "/options":
+		writeJSON(w, map[string]any{"directories": map[string]string{"downloads": "/app/downloads", "incomplete": "/app/incomplete"}})
 	case p == "/searches" && r.Method == http.MethodPost:
 		var req struct {
 			ID         string `json:"id"`

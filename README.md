@@ -7,9 +7,13 @@ downloaded automatically. Uncertain ones go to a review queue, and the rest of
 the run keeps going while they wait.
 
 - Pure Go terminal app (Bubble Tea). No CGO, no Python, no spotdl, no ffprobe.
-- **Remote only.** slskify talks to the Spotify Web API and the slskd REST API,
-  nothing else. It never reads slskd's download folder, and it does no tagging
-  or moving of files.
+- **Works with a remote slskd.** By default slskify talks only to the Spotify
+  Web API and the slskd REST API. It never touches slskd's download folder.
+- **Optional library organizing** (slskd on the same machine): finished
+  downloads are re-tagged from Spotify (title, artists, album, track, disc,
+  date, genre, ISRC, cover art) and moved into your music folder, e.g.
+  `~/Music/Nightly/THE VOID/haunted house.mp3`. Off by default. See
+  [Organizing downloads](#organizing-downloads-optional).
 - **Matching comes first.** "Is this the right recording?" is scored separately
   from "how good is the file?". A FLAC of the wrong song never beats a good MP3
   of the right one.
@@ -65,6 +69,11 @@ live** and saves the config (mode `0600`) only when both tests pass. Re-open
 the setup screen with `slskify setup` or **ctrl+s**. Secrets are masked and
 never logged.
 
+The setup screen also has an **Organize downloads** switch (focus it and press
+`space`). Turning it on shows the slskd downloads directory, the music library
+directory and the path template. See
+[Organizing downloads](#organizing-downloads-optional).
+
 ## Usage
 
 ```
@@ -112,6 +121,7 @@ launch → setup (if needed) → run picker / paste URL → tracks load →
 | Screen | Keys |
 |---|---|
 | everywhere | `ctrl+c` quit (state is saved; in-flight work is stopped cleanly) |
+| setup | `tab`/`↑↓` field, `space` toggle organizing, `enter` next field / test & save on the last, `ctrl+t` test & save, `esc` cancel |
 | run picker | type/paste URL, `enter` load (empty URL = resume highlighted run), `↑↓`, `ctrl+s` setup |
 | pre-run | `tab` switch list, `↑↓` choose, `enter` start, `n` new / `e` edit / `c` copy / `d` delete (twice) quality profile, `esc` back |
 | quality profile editor | `tab` next field, in the rank list: `a` add, `enter` edit, `d` delete, `shift+↑↓` or `[` `]` move, `1`–`9` quick-add a common rule; `ctrl+s` save, `esc` cancel |
@@ -298,6 +308,56 @@ pending → searching → ranked → downloading → done
   Downloading tracks are reconciled against slskd's current transfer list, so
   nothing is enqueued twice. A transfer slskd no longer lists goes to review.
 
+- **Organizing** (when enabled): after a transfer succeeds, the track shows
+  "organizing …" while the file is tagged and moved, then **done** with
+  "saved to <path>". If the file can't be organized, the track is still done
+  (the download itself worked), the reason is shown, and the file stays where
+  slskd put it. Transfers that finished while slskify was closed are
+  organized when the run is resumed.
+
+## Organizing downloads (optional)
+
+Soulseek files often have inconsistent tags. When slskd runs **on the same
+machine** as slskify (or its download folder is mounted here), slskify can
+clean up each finished download:
+
+1. **Find the file** in slskd's downloads directory. slskd normally saves it
+   as `<downloads>/<remote folder>/<file name>`. If you changed slskd's
+   subfolder pattern, or slskd renamed the file to avoid a clash, slskify
+   scans the directory for a file with the same name, extension and exact
+   size. It waits up to 30 s for slskd to move the file out of its incomplete
+   folder.
+2. **Rewrite the tags** from Spotify: title, artist(s), album artist, album,
+   track number/total, disc, release date, genre (the first genre Spotify
+   lists for the primary artist, often none), ISRC, compilation flag and the
+   album cover (embedded as the front cover). Old tags are removed, except
+   ReplayGain/R128 loudness tags. Tags are written with
+   [TagLib](https://taglib.org) compiled to WebAssembly
+   ([go-taglib](https://github.com/sentriz/go-taglib)), so there is still no
+   CGO. MP3, FLAC, Ogg Vorbis/Opus, M4A/ALAC, WAV, AIFF, WMA, APE and
+   WavPack are supported.
+3. **Move it** to `<music dir>/<path template>.<ext>`. The default template
+   `{album_artist}/{album}/{title}` gives
+   `~/Music/Nightly/THE VOID/haunted house.mp3`. Folder and file names are
+   made safe (`/ \ : * ? " < > |` become `_`). An existing file is never
+   overwritten: the new one gets ` (2)`, ` (3)`… Emptied slskd folders are
+   removed. Moving across disks works (copy, then delete).
+
+Placeholders: `{album_artist}`, `{artist}` (first artist), `{artists}` (all,
+comma separated), `{album}`, `{title}`, `{track}` (two digits), `{disc}`,
+`{year}`. Text next to an empty placeholder is trimmed, so
+`{track} - {title}` becomes just the title when there is no track number.
+
+Enable it in the setup screen (`ctrl+s`) or in the config file. The
+directories are checked before a run starts. slskify reports a clear error
+if slskd's downloads directory doesn't exist on this machine. If slskd runs in
+Docker, use the **host** path of the mounted downloads volume, not the
+container path. (The setup screen pre-fills the path slskd reports, which is
+the container path in that case.)
+
+With organizing disabled (the default, and the right choice for a remote
+slskd), nothing changes: slskify only uses the two web APIs.
+
 | Speed preset | Searches | Downloads | Delay | Search timeout |
 |---|---|---|---|---|
 | `slow` | 1 | 2 | 3 s | 20 s |
@@ -328,6 +388,12 @@ queue_skip_min_alternatives = 2 # untried auto-eligible candidates needed to ski
 stall_timeout = "3m"            # in progress with no bytes moving
 max_candidate_attempts = 3
 poll_interval = "2s"
+
+[organize]                      # needs slskd on this machine; see "Organizing downloads"
+enabled = false
+downloads_dir = ""              # slskd's downloads directory, as a path on this machine
+music_dir = ""                  # library root, e.g. "~/Music"
+path_template = "{album_artist}/{album}/{title}"   # extension is added
 
 [match]
 high_threshold = 80
@@ -398,7 +464,10 @@ A preset sets either `tiers` or the shorter `rank` (see
 
 - **No verification of downloaded files.** The only signal after download is
   the transfer state reported by slskd. Matching before download is the only
-  safeguard.
+  safeguard. (Organizing re-tags files but doesn't inspect the audio.)
+- **Organizing needs local access** to slskd's downloads directory. With a
+  remote slskd, leave it off. Settings changed in setup apply to the next
+  started or resumed run.
 - **Fake or upscaled lossless can't be detected** from search metadata. A
   transcoded MP3 saved as FLAC looks exactly like a real FLAC.
 - **Public sources only.** Client Credentials can't read private playlists.
@@ -426,6 +495,7 @@ go build ./... && go vet ./... && go test ./...
 Packages:
 - Core, with no TUI dependency: `internal/spotify`, `internal/slskd`,
   `internal/match` (pure, heavily tested), `internal/pipeline`,
-  `internal/store`, `internal/config`.
+  `internal/store`, `internal/config`, `internal/organize` (optional
+  post-download tagging and moving).
 - `internal/fakeapi`: in-memory Spotify and slskd servers used by tests.
 - `internal/tui`: the Bubble Tea front end.
