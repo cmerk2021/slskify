@@ -107,12 +107,32 @@ type Searcher struct {
 // de-duplicating results by (username, path), and stops early once a
 // candidate is auto-eligible.
 func (s *Searcher) Search(ctx context.Context, t match.Target, custom string) (SearchResult, error) {
+	return s.SearchWith(ctx, t, custom, nil, nil)
+}
+
+// SearchWith is Search with files already found (e.g. by an album search)
+// merged into every evaluation, and an album-folder preference (see
+// match.EvaluateWithFolders). If the seed alone yields an automatic
+// match, no search is run.
+func (s *Searcher) SearchWith(ctx context.Context, t match.Target, custom string, seed []match.File, folders map[string]int) (SearchResult, error) {
 	queries := s.Matcher.Queries(t)
 	if q := strings.TrimSpace(custom); q != "" {
 		queries = []string{match.QueryText(q)}
 	}
 	var res SearchResult
 	seen := map[string]bool{}
+	for _, f := range seed {
+		if !seen[f.Key()] {
+			seen[f.Key()] = true
+			res.Files = append(res.Files, f)
+		}
+	}
+	if len(res.Files) > 0 {
+		res.Decision = s.Matcher.EvaluateWithFolders(t, res.Files, s.Policy, nil, folders)
+		if res.Decision.Outcome == match.OutcomeAuto {
+			return res, nil
+		}
+	}
 	var lastErr error
 	ok := 0
 	for _, q := range queries {
@@ -143,7 +163,7 @@ func (s *Searcher) Search(ctx context.Context, t match.Target, custom string) (S
 				res.Files = append(res.Files, f)
 			}
 		}
-		res.Decision = s.Matcher.Evaluate(t, res.Files, s.Policy, nil)
+		res.Decision = s.Matcher.EvaluateWithFolders(t, res.Files, s.Policy, nil, folders)
 		if res.Decision.Outcome == match.OutcomeAuto {
 			break
 		}
@@ -152,7 +172,92 @@ func (s *Searcher) Search(ctx context.Context, t match.Target, custom string) (S
 		return res, fmt.Errorf("search failed: %w", lastErr)
 	}
 	if ok == 0 {
-		res.Decision = s.Matcher.Evaluate(t, nil, s.Policy, nil)
+		res.Decision = s.Matcher.EvaluateWithFolders(t, res.Files, s.Policy, nil, folders)
+	}
+	return res, nil
+}
+
+// AlbumResult is the outcome of one search shared by several tracks of the
+// same album.
+type AlbumResult struct {
+	Query string
+	Files []match.File
+	// Folders maps match.FolderKey → number of the album's tracks the
+	// folder can supply (only folders supplying two or more).
+	Folders map[string]int
+	// Decisions[i] is the decision for targets[i].
+	Decisions []match.Decision
+}
+
+// AlbumGroups groups target indices by album, in first-appearance order.
+// Only groups of two or more tracks with a usable album query are
+// returned: for those, one album search can replace a search per track.
+func AlbumGroups(m *match.Matcher, ts []match.Target) [][]int {
+	var keys []string
+	groups := map[string][]int{}
+	for i, t := range ts {
+		k := match.AlbumKey(t)
+		if k == "" || m.AlbumQuery(t) == "" {
+			continue
+		}
+		if _, ok := groups[k]; !ok {
+			keys = append(keys, k)
+		}
+		groups[k] = append(groups[k], i)
+	}
+	var out [][]int
+	for _, k := range keys {
+		if len(groups[k]) >= 2 {
+			out = append(out, groups[k])
+		}
+	}
+	return out
+}
+
+// SearchAlbum runs a single album query (match.Matcher.AlbumQuery of the
+// first target) and evaluates every target against its results. Peers
+// usually share whole albums in one folder, so this typically finds most
+// tracks at once; folders that supply several tracks are preferred.
+func (s *Searcher) SearchAlbum(ctx context.Context, ts []match.Target) (AlbumResult, error) {
+	var res AlbumResult
+	if len(ts) == 0 {
+		return res, nil
+	}
+	res.Query = s.Matcher.AlbumQuery(ts[0])
+	if res.Query == "" {
+		return res, fmt.Errorf("no album query for %q", ts[0].Album)
+	}
+	if s.BeforeSearch != nil {
+		if err := s.BeforeSearch(ctx); err != nil {
+			return res, err
+		}
+	}
+	if s.OnQuery != nil {
+		s.OnQuery(res.Query)
+	}
+	rs, err := s.Slskd.Search(ctx, res.Query, s.Options)
+	if err != nil {
+		if ctx.Err() != nil {
+			return res, ctx.Err()
+		}
+		return res, fmt.Errorf("album search failed: %w", err)
+	}
+	seen := map[string]bool{}
+	for _, f := range FilesFromResponses(rs) {
+		if !seen[f.Key()] {
+			seen[f.Key()] = true
+			res.Files = append(res.Files, f)
+		}
+	}
+	res.Decisions = make([]match.Decision, len(ts))
+	for i, t := range ts {
+		res.Decisions[i] = s.Matcher.Evaluate(t, res.Files, s.Policy, nil)
+	}
+	res.Folders = match.FolderCoverage(res.Decisions)
+	if len(res.Folders) > 0 {
+		for i, t := range ts {
+			res.Decisions[i] = s.Matcher.EvaluateWithFolders(t, res.Files, s.Policy, nil, res.Folders)
+		}
 	}
 	return res, nil
 }

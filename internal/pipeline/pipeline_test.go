@@ -482,3 +482,60 @@ func TestPipelineQueueSkipNeedsAlternatives(t *testing.T) {
 		t.Fatalf("only one alternative: should keep waiting; cancelled %v enqueued %v", sl.cancelled, sl.enqueued)
 	}
 }
+
+func voidTrack(n int, title string) spotify.Track {
+	return spotify.Track{SpotifyID: fmt.Sprintf("v%d", n), Title: title, Artists: []string{"Nightly"}, AlbumArtist: "Nightly",
+		Album: "THE VOID", AlbumType: "album", TrackNumber: n, DurationMs: (200 + n) * 1000}
+}
+
+func voidFile(user, title string, n int) slskd.File {
+	return slskd.File{Filename: fmt.Sprintf(`@@%s\music\Nightly\THE VOID\%02d - %s.flac`, user, n, title),
+		Size: 30_000_000, Extension: "flac", Length: intp(200 + n), BitDepth: intp(16), SampleRate: intp(44100)}
+}
+
+// An album's tracks share one search; only tracks missing from the album
+// folders get their own search, and the folder holding most of the album
+// wins over a faster peer with a single file.
+func TestPipelineAlbumGrouping(t *testing.T) {
+	tracks := []spotify.Track{voidTrack(1, "Ultraviolet"), voidTrack(2, "Glasshouse"), voidTrack(3, "Afterglow")}
+	sl := &fakeSlskd{responses: func(q string) []slskd.Response {
+		switch q {
+		case "nightly the void":
+			return []slskd.Response{
+				{Username: "album", HasFreeUploadSlot: true, UploadSpeed: 1e5, Files: []slskd.File{
+					voidFile("album", "Ultraviolet", 1), voidFile("album", "Glasshouse", 2)}},
+				{Username: "solo", HasFreeUploadSlot: true, UploadSpeed: 9e6, Files: []slskd.File{
+					voidFile("solo", "Ultraviolet", 1)}},
+			}
+		case "nightly afterglow":
+			return []slskd.Response{{Username: "other", HasFreeUploadSlot: true, UploadSpeed: 1e6, Files: []slskd.File{
+				voidFile("other", "Afterglow", 3)}}}
+		}
+		return nil
+	}}
+	h := newHarness(t, sl, testOptions(), tracks...)
+	h.start(testOptions(), nil)
+	v1 := h.waitState(0, store.StateDone)
+	v2 := h.waitState(1, store.StateDone)
+	v3 := h.waitState(2, store.StateDone)
+	if v1.ChosenUser != "album" || v2.ChosenUser != "album" || v3.ChosenUser != "other" {
+		t.Fatalf("chosen %s %s %s", v1.ChosenUser, v2.ChosenUser, v3.ChosenUser)
+	}
+	sl.mu.Lock()
+	defer sl.mu.Unlock()
+	if len(sl.searches) != 2 || sl.searches[0] != "nightly the void" || sl.searches[1] != "nightly afterglow" {
+		t.Fatalf("searches %v", sl.searches)
+	}
+	if len(v3.Queries) != 2 || v3.Queries[0] != "nightly the void" {
+		t.Fatalf("queries %v", v3.Queries)
+	}
+}
+
+func TestAlbumGroups(t *testing.T) {
+	m := match.NewMatcher(match.DefaultConfig())
+	ts := []match.Target{TargetOf(voidTrack(1, "A")), TargetOf(wonderwall), TargetOf(voidTrack(2, "B"))}
+	g := AlbumGroups(m, ts)
+	if len(g) != 1 || len(g[0]) != 2 || g[0][0] != 0 || g[0][1] != 2 {
+		t.Fatalf("groups %v", g)
+	}
+}
