@@ -54,8 +54,11 @@ type Result struct {
 // use.
 type Organizer struct {
 	downloads, music, template string
-	source                     Source
-	tagger                     Tagger
+	// library is the music library root; it differs from music when files
+	// go to a playlist folder.
+	library string
+	source  Source
+	tagger  Tagger
 	// LocateTimeout is how long to wait for slskd to move a finished file
 	// into the downloads directory.
 	LocateTimeout time.Duration
@@ -93,14 +96,22 @@ func New(downloads, music, template string, source Source, tagger Tagger) (*Orga
 		tagger = TagLib{}
 	}
 	return &Organizer{
-		downloads: dl, music: mu, template: template, source: source, tagger: tagger,
+		downloads: dl, music: mu, library: mu, template: template, source: source, tagger: tagger,
 		LocateTimeout: 30 * time.Second, LocateEvery: time.Second,
 		tracks: map[string]cached[spotify.Track]{}, genres: map[string]cached[[]string]{}, covers: map[string]cached[[]byte]{},
 	}, nil
 }
 
-// MusicDir returns the library root.
+// MusicDir returns the folder files are moved into.
 func (o *Organizer) MusicDir() string { return o.music }
+
+// LibraryDir returns the music library root (where playlist files go).
+// It equals MusicDir unless SetLibraryDir changed it.
+func (o *Organizer) LibraryDir() string { return o.library }
+
+// SetLibraryDir sets the library root, for an organizer whose MusicDir is
+// a folder elsewhere (e.g. a playlist folder). Call before use.
+func (o *Organizer) SetLibraryDir(dir string) { o.library = dir }
 
 // Organize finds the finished download of remotePath (size bytes, 0 if
 // unknown), rewrites its tags from t and moves it into the library. A
@@ -145,8 +156,11 @@ func (o *Organizer) Organize(ctx context.Context, t spotify.Track, remotePath st
 // incomplete directory.
 func (o *Organizer) locate(ctx context.Context, remotePath string, size int64) (string, error) {
 	exclude := ""
-	if within(o.music, o.downloads) {
-		exclude = o.music
+	for _, d := range []string{o.library, o.music} {
+		if within(d, o.downloads) {
+			exclude = d
+			break
+		}
 	}
 	deadline := time.Now().Add(o.LocateTimeout)
 	for {

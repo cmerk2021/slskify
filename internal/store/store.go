@@ -33,6 +33,12 @@ const (
 	StateSkipped     State = "skipped"
 )
 
+// Output modes of a run.
+const (
+	OutputLibrary  = ""
+	OutputPlaylist = "playlist"
+)
+
 // Run is one invocation against a Spotify source.
 type Run struct {
 	ID            int64
@@ -41,7 +47,13 @@ type Run struct {
 	Name          string
 	QualityPreset string
 	SpeedPreset   string
-	CreatedAt     time.Time
+	// Output is where finished files go: OutputLibrary (the organize
+	// config) or OutputPlaylist (flat in a per-playlist folder).
+	Output string
+	// PlaylistFile: keep an .m3u8 in the music directory listing the
+	// run's organized files.
+	PlaylistFile bool
+	CreatedAt    time.Time
 	// Skipped lists source items that could not be resolved.
 	Skipped []spotify.SkippedItem
 }
@@ -70,6 +82,9 @@ type Track struct {
 	TransferID   string
 	TransferUser string
 	TransferPath string
+	// OutputPath is where the organized file was saved (empty when the
+	// file was not organized).
+	OutputPath string
 	// ReviewSeq orders the review queue: assigned (monotonic) whenever the
 	// track enters needs_review/not_found, so arrivals append.
 	ReviewSeq int64
@@ -162,6 +177,10 @@ var migrations = []string{
 		UNIQUE(track_id, username, filename)
 	);
 	CREATE INDEX candidates_track ON candidates(track_id, rank);`,
+	// 2: output mode, playlist file and organized paths
+	`ALTER TABLE runs ADD COLUMN output TEXT NOT NULL DEFAULT '';
+	ALTER TABLE runs ADD COLUMN playlist_file INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE tracks ADD COLUMN output_path TEXT NOT NULL DEFAULT '';`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -213,8 +232,8 @@ func (s *Store) CreateRun(ctx context.Context, r Run, tracks []spotify.Track) (R
 		return r, nil, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `INSERT INTO runs(source_url,kind,name,quality_preset,speed_preset,skipped_json,created_at) VALUES(?,?,?,?,?,?,?)`,
-		r.SourceURL, r.Kind, r.Name, r.QualityPreset, r.SpeedPreset, string(skipped), r.CreatedAt.Unix())
+	res, err := tx.ExecContext(ctx, `INSERT INTO runs(source_url,kind,name,quality_preset,speed_preset,output,playlist_file,skipped_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+		r.SourceURL, r.Kind, r.Name, r.QualityPreset, r.SpeedPreset, r.Output, r.PlaylistFile, string(skipped), r.CreatedAt.Unix())
 	if err != nil {
 		return r, nil, err
 	}
@@ -240,12 +259,19 @@ func (s *Store) UpdateRunPresets(ctx context.Context, runID int64, quality, spee
 	return err
 }
 
+// UpdateRunOutput changes the output mode and playlist-file option of a
+// run (e.g. chosen on resume). Files already organized stay where they are.
+func (s *Store) UpdateRunOutput(ctx context.Context, runID int64, output string, playlistFile bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE runs SET output=?, playlist_file=? WHERE id=?`, output, playlistFile, runID)
+	return err
+}
+
 // ErrNotFound is returned for missing rows.
 var ErrNotFound = errors.New("not found")
 
 // GetRun loads one run.
 func (s *Store) GetRun(ctx context.Context, id int64) (Run, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,source_url,kind,name,quality_preset,speed_preset,skipped_json,created_at FROM runs WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT `+runCols+` FROM runs WHERE id=?`, id)
 	r, err := scanRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
@@ -253,13 +279,15 @@ func (s *Store) GetRun(ctx context.Context, id int64) (Run, error) {
 	return r, err
 }
 
+const runCols = `id,source_url,kind,name,quality_preset,speed_preset,output,playlist_file,skipped_json,created_at`
+
 type scanner interface{ Scan(...any) error }
 
 func scanRun(sc scanner) (Run, error) {
 	var r Run
 	var skipped string
 	var created int64
-	if err := sc.Scan(&r.ID, &r.SourceURL, &r.Kind, &r.Name, &r.QualityPreset, &r.SpeedPreset, &skipped, &created); err != nil {
+	if err := sc.Scan(&r.ID, &r.SourceURL, &r.Kind, &r.Name, &r.QualityPreset, &r.SpeedPreset, &r.Output, &r.PlaylistFile, &skipped, &created); err != nil {
 		return r, err
 	}
 	r.CreatedAt = time.Unix(created, 0)
@@ -269,7 +297,7 @@ func scanRun(sc scanner) (Run, error) {
 
 // ListRuns returns runs, newest first, with state counts.
 func (s *Store) ListRuns(ctx context.Context) ([]RunSummary, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,source_url,kind,name,quality_preset,speed_preset,skipped_json,created_at FROM runs ORDER BY created_at DESC, id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+runCols+` FROM runs ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -314,14 +342,14 @@ func (s *Store) DeleteRun(ctx context.Context, id int64) error {
 	return err
 }
 
-const trackCols = `id,run_id,pos,meta_json,state,query,reason,chosen_user,chosen_path,attempts,transfer_id,transfer_user,transfer_path,review_seq,auto_count,passed,updated_at`
+const trackCols = `id,run_id,pos,meta_json,state,query,reason,chosen_user,chosen_path,attempts,transfer_id,transfer_user,transfer_path,output_path,review_seq,auto_count,passed,updated_at`
 
 func scanTrack(sc scanner) (Track, error) {
 	var t Track
 	var meta string
 	var updated int64
 	err := sc.Scan(&t.ID, &t.RunID, &t.Pos, &meta, &t.State, &t.Query, &t.Reason, &t.ChosenUser, &t.ChosenPath,
-		&t.Attempts, &t.TransferID, &t.TransferUser, &t.TransferPath, &t.ReviewSeq, &t.AutoCount, &t.Passed, &updated)
+		&t.Attempts, &t.TransferID, &t.TransferUser, &t.TransferPath, &t.OutputPath, &t.ReviewSeq, &t.AutoCount, &t.Passed, &updated)
 	if err != nil {
 		return t, err
 	}
@@ -353,8 +381,8 @@ func (s *Store) Tracks(ctx context.Context, runID int64) ([]Track, error) {
 // UpdateTrack persists a track's mutable fields.
 func (s *Store) UpdateTrack(ctx context.Context, t Track) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE tracks SET state=?,query=?,reason=?,chosen_user=?,chosen_path=?,attempts=?,
-		transfer_id=?,transfer_user=?,transfer_path=?,review_seq=?,auto_count=?,passed=?,updated_at=? WHERE id=?`,
-		t.State, t.Query, t.Reason, t.ChosenUser, t.ChosenPath, t.Attempts, t.TransferID, t.TransferUser, t.TransferPath,
+		transfer_id=?,transfer_user=?,transfer_path=?,output_path=?,review_seq=?,auto_count=?,passed=?,updated_at=? WHERE id=?`,
+		t.State, t.Query, t.Reason, t.ChosenUser, t.ChosenPath, t.Attempts, t.TransferID, t.TransferUser, t.TransferPath, t.OutputPath,
 		t.ReviewSeq, t.AutoCount, t.Passed, time.Now().Unix(), t.ID)
 	return err
 }

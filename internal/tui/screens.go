@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/cmerk2021/slskify/internal/app"
 	"github.com/cmerk2021/slskify/internal/config"
+	"github.com/cmerk2021/slskify/internal/organize"
 	"github.com/cmerk2021/slskify/internal/spotify"
 	"github.com/cmerk2021/slskify/internal/store"
 )
@@ -108,7 +110,7 @@ func (p *pickerModel) view(w, h int) (string, string) {
 			if f := r.Counts[store.StateFailed]; f > 0 {
 				line += fmt.Sprintf(", %d failed", f)
 			}
-			line += stDim.Render(fmt.Sprintf("  [%s · %s]", r.QualityPreset, r.SpeedPreset))
+			line += stDim.Render(fmt.Sprintf("  [%s · %s%s]", r.QualityPreset, r.SpeedPreset, runExtras(r.Run)))
 			if i == p.cursor {
 				line = stSel.Render("› " + trunc(line, w-3))
 			} else {
@@ -131,17 +133,70 @@ type prerunModel struct {
 	qi, si, focus  int
 	// confirmDel is the preset awaiting a second "d" to be deleted.
 	confirmDel string
+	// Output options; only offered while organizing is enabled.
+	organizeOn    bool
+	output        string // store.OutputLibrary or store.OutputPlaylist
+	playlistFile  bool
+	libraryDest   string // shown next to the output choices
+	playlistDest  string
+	playlistFPath string
 }
+
+// Pre-run sections, in focus order.
+const (
+	secQuality = iota
+	secSpeed
+	secOutput
+	secPlaylistFile
+	numSections
+)
+
+// outputLabels name the output modes on screen (library, playlist).
+var outputLabels = []string{"library", "playlist"}
 
 func newPrerunModel(a *app.App, coll *spotify.Collection, resume *store.RunSummary) *prerunModel {
 	p := &prerunModel{coll: coll, resume: resume, sNames: a.Cfg.SpeedPresetNames(), sp: a.Cfg.SpeedPresets}
 	q, s := a.Cfg.QualityPreset, a.Cfg.SpeedPreset
+	p.playlistFile = a.Cfg.Organize.Enabled && a.Cfg.Organize.PlaylistFile
+	name := ""
 	if resume != nil {
 		q, s = resume.QualityPreset, resume.SpeedPreset
+		p.output, p.playlistFile, name = resume.Output, resume.PlaylistFile, resume.Name
+	} else if coll != nil {
+		name = coll.Name
 	}
 	p.reload(a, q)
 	p.si = indexOf(p.sNames, s)
+	p.organizeOn = a.Cfg.Organize.Enabled
+	oc := a.Cfg.Organize
+	tmpl := oc.PathTemplate
+	if strings.TrimSpace(tmpl) == "" {
+		tmpl = organize.DefaultTemplate
+	}
+	music, _ := organize.ExpandPath(oc.MusicDir)
+	p.libraryDest = filepath.Join(music, tmpl)
+	if dir, err := a.PlaylistDir(); err == nil {
+		p.playlistDest = filepath.Join(organize.PlaylistFolder(dir, name), organize.FlatTemplate)
+	}
+	p.playlistFPath = organize.PlaylistFilePath(music, name)
 	return p
+}
+
+// settings returns the choices made on this screen.
+func (p *prerunModel) settings() app.RunSettings {
+	rs := app.RunSettings{Quality: p.quality(), Speed: p.speed()}
+	if p.organizeOn {
+		rs.Output, rs.PlaylistFile = p.output, p.playlistFile
+	}
+	return rs
+}
+
+// sections returns the focusable sections.
+func (p *prerunModel) sections() int {
+	if p.organizeOn {
+		return numSections
+	}
+	return secOutput
 }
 
 // reload refreshes the quality presets (after the profile editor saved or
@@ -184,7 +239,7 @@ func (m *Model) updatePrerun(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	cur, n := &p.qi, len(p.qNames)
-	if p.focus == 1 {
+	if p.focus == secSpeed {
 		cur, n = &p.si, len(p.sNames)
 	}
 	confirm := p.confirmDel
@@ -202,7 +257,7 @@ func (m *Model) updatePrerun(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen = scrProfile
 		return m, m.profile.init()
 	case "d", "delete":
-		if p.focus != 0 {
+		if p.focus != secQuality {
 			return m, nil
 		}
 		name := p.quality()
@@ -226,12 +281,28 @@ func (m *Model) updatePrerun(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.info(fmt.Sprintf("Deleted quality profile %q", name))
 		}
-	case "tab", "shift+tab", "left", "right", "h", "l":
-		p.focus = 1 - p.focus
-	case "up", "k":
-		*cur = (*cur - 1 + n) % n
-	case "down", "j":
-		*cur = (*cur + 1) % n
+	case "tab", "right", "l":
+		p.focus = (p.focus + 1) % p.sections()
+	case "shift+tab", "left", "h":
+		p.focus = (p.focus - 1 + p.sections()) % p.sections()
+	case "up", "k", "down", "j", " ", "space":
+		switch p.focus {
+		case secPlaylistFile:
+			p.playlistFile = !p.playlistFile
+			return m, nil
+		case secOutput:
+			if p.output == store.OutputPlaylist {
+				p.output = store.OutputLibrary
+			} else {
+				p.output = store.OutputPlaylist
+			}
+			return m, nil
+		}
+		if k.String() == "up" || k.String() == "k" {
+			*cur = (*cur - 1 + n) % n
+		} else {
+			*cur = (*cur + 1) % n
+		}
 	case "esc":
 		m.screen = scrPicker
 		return m, tea.Batch(m.picker.input.Focus(), m.loadRuns())
@@ -294,8 +365,8 @@ func (p *prerunModel) view(w, h int) (string, string) {
 		}
 		lines = append(lines, "")
 	}
-	section("Quality preset", p.focus == 0, p.qNames, p.qi, func(n string) (string, string) { return p.qp[n], "" })
-	section("Speed preset", p.focus == 1, p.sNames, p.si, func(n string) (string, string) {
+	section("Quality preset", p.focus == secQuality, p.qNames, p.qi, func(n string) (string, string) { return p.qp[n], "" })
+	section("Speed preset", p.focus == secSpeed, p.sNames, p.si, func(n string) (string, string) {
 		sp := p.sp[n]
 		d := sp.Description
 		if d == "" {
@@ -303,5 +374,37 @@ func (p *prerunModel) view(w, h int) (string, string) {
 		}
 		return d, sp.Warning
 	})
-	return fitLines(lines, w, h), helpLine("tab", "switch list", "↑↓", "choose", "enter", "start", "n/e/c/d", "new/edit/copy/delete quality profile", "esc", "back", "q", "quit")
+	if !p.organizeOn {
+		lines = append(lines, "  "+stBold.Render("Output"), stDim.Render("   files stay where slskd puts them; turn on organizing in setup (ctrl+s on the start screen)"),
+			stDim.Render("   for playlist output and playlist files"))
+	} else {
+		sel := 0
+		if p.output == store.OutputPlaylist {
+			sel = 1
+		}
+		section("Output", p.focus == secOutput, outputLabels, sel, func(n string) (string, string) {
+			if n == outputLabels[1] {
+				return "playlist folder: tags normalized, all files flat in " + p.playlistDest + ".<ext>", ""
+			}
+			return "your organize settings: " + p.libraryDest + ".<ext>", ""
+		})
+		t := "  " + stBold.Render("Playlist file")
+		if p.focus == secPlaylistFile {
+			t = stTitle.Render("▸ Playlist file")
+		}
+		box := "[ ] off"
+		if p.playlistFile {
+			box = "[x] write " + p.playlistFPath
+		}
+		if p.focus == secPlaylistFile {
+			box = stBold.Render(box)
+		}
+		lines = append(lines, t, "   "+box, stDim.Render("       .m3u8 with paths relative to the music directory, updated as tracks finish"))
+	}
+	keys := []string{"tab", "switch section", "↑↓", "choose"}
+	if p.focus == secPlaylistFile {
+		keys = []string{"tab", "switch section", "space", "toggle"}
+	}
+	keys = append(keys, "enter", "start", "n/e/c/d", "new/edit/copy/delete quality profile", "esc", "back", "q", "quit")
+	return fitLines(lines, w, h), helpLine(keys...)
 }

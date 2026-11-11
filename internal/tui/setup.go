@@ -30,23 +30,26 @@ const (
 	fDownloads
 	fMusic
 	fTemplate
+	fPlaylistDir
 	numFields
 )
 
 type setupModel struct {
-	inputs    []textinput.Model // indexed by field; inputs[fOrganize] unused
-	labels    []string
-	hints     []string
-	organize  bool
-	dirHint   string
-	focus     int
-	testing   bool
-	tested    bool
-	result    app.ConnResult
-	orgErr    error
-	saveErr   error
-	canCancel bool
-	missing   []string
+	inputs   []textinput.Model // indexed by field; inputs[fOrganize] unused
+	labels   []string
+	hints    []string
+	organize bool
+	// playlistFile is kept as configured (edited in the config file).
+	playlistFile bool
+	dirHint      string
+	focus        int
+	testing      bool
+	tested       bool
+	result       app.ConnResult
+	orgErr       error
+	saveErr      error
+	canCancel    bool
+	missing      []string
 }
 
 func newSetupModel(a *app.App, canCancel bool) *setupModel {
@@ -57,11 +60,12 @@ func newSetupModel(a *app.App, canCancel bool) *setupModel {
 		tmpl = organize.DefaultTemplate
 	}
 	s := &setupModel{
-		canCancel: canCancel,
-		missing:   a.Cfg.MissingCredentials(),
-		organize:  oc.Enabled,
+		canCancel:    canCancel,
+		missing:      a.Cfg.MissingCredentials(),
+		organize:     oc.Enabled,
+		playlistFile: oc.PlaylistFile,
 		labels: []string{"slskd URL", "slskd API key", "Spotify client ID", "Spotify client secret",
-			"Organize downloads", "slskd downloads dir", "Music library dir", "Path template"},
+			"Organize downloads", "slskd downloads dir", "Music library dir", "Path template", "Playlist folders dir"},
 		hints: []string{
 			"e.g. http://localhost:5030",
 			"slskd.yml → web.authentication.api_keys",
@@ -71,10 +75,11 @@ func newSetupModel(a *app.App, canCancel bool) *setupModel {
 			"where slskd saves finished downloads, as a path on this machine",
 			"e.g. ~/Music; files go to <dir>/<template>.<ext>",
 			"{" + strings.Join(organize.PlaceholderNames(), "} {") + "}",
+			"playlist output puts files flat in <dir>/<playlist name>/; empty = music library dir",
 		},
 	}
 	vals := []string{cr.SlskdURL, cr.SlskdAPIKey, cr.SpotifyClientID, cr.SpotifyClientSecret,
-		"", oc.DownloadsDir, oc.MusicDir, tmpl}
+		"", oc.DownloadsDir, oc.MusicDir, tmpl, oc.PlaylistDir}
 	for i, v := range vals {
 		ti := textinput.New()
 		ti.Prompt = ""
@@ -136,7 +141,8 @@ func (s *setupModel) creds() config.Credentials {
 
 func (s *setupModel) organizeConfig() config.OrganizeConfig {
 	v := func(i int) string { return strings.TrimSpace(s.inputs[i].Value()) }
-	return config.OrganizeConfig{Enabled: s.organize, DownloadsDir: v(fDownloads), MusicDir: v(fMusic), PathTemplate: v(fTemplate)}
+	return config.OrganizeConfig{Enabled: s.organize, DownloadsDir: v(fDownloads), MusicDir: v(fMusic), PathTemplate: v(fTemplate),
+		PlaylistDir: v(fPlaylistDir), PlaylistFile: s.playlistFile}
 }
 
 func (s *setupModel) move(d int) tea.Cmd {

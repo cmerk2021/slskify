@@ -187,7 +187,11 @@ func (r *Runner) finishDownload(ctx context.Context, ts *trackState, cand *match
 	if len(res.Warnings) > 0 {
 		reason += " (" + res.Warnings[0] + ")"
 	}
+	r.mu.Lock()
+	ts.OutputPath = res.Path
+	r.mu.Unlock()
 	r.setState(ts, store.StateDone, reason)
+	r.writePlaylist()
 }
 
 // transferVerdict is what to do about a transfer after a poll. Keeping this

@@ -52,6 +52,10 @@ func TestSetupOrganizeSection(t *testing.T) {
 		t.Fatalf("focus %d", s.focus)
 	}
 	send(m, "enter", "enter", "enter")
+	if s.focus != fPlaylistDir {
+		t.Fatalf("focus %d", s.focus)
+	}
+	send(m, "enter")
 	if s.orgErr == nil || !strings.Contains(s.orgErr.Error(), "music directory") {
 		t.Fatalf("orgErr %v", s.orgErr)
 	}
@@ -67,6 +71,7 @@ func TestSetupOrganizeSection(t *testing.T) {
 	s.inputs[fDownloads].SetValue(dl)
 	s.inputs[fMusic].SetValue(filepath.Join(dir, "Music"))
 	s.inputs[fTemplate].SetValue("{artist}/{title}")
+	s.inputs[fPlaylistDir].SetValue(" ~/Playlists ")
 	m.Update(connTestedMsg{cr: s.creds(), oc: s.organizeConfig()})
 	if s.saveErr != nil {
 		t.Fatal(s.saveErr)
@@ -75,7 +80,7 @@ func TestSetupOrganizeSection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o := loaded.Organize; !o.Enabled || o.DownloadsDir != dl || o.PathTemplate != "{artist}/{title}" || a.Cfg.Organize != o {
+	if o := loaded.Organize; !o.Enabled || o.DownloadsDir != dl || o.PathTemplate != "{artist}/{title}" || o.PlaylistDir != "~/Playlists" || a.Cfg.Organize != o {
 		t.Fatalf("saved %+v, app %+v", o, a.Cfg.Organize)
 	}
 
