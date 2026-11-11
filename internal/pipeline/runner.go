@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -64,6 +65,10 @@ type Options struct {
 	// possible when slskd runs on this machine). Nil leaves files where
 	// slskd put them.
 	Organizer Organizer
+	// PlaylistFile, when set (and an Organizer is), is an .m3u8 path that
+	// is rewritten with the run's organized files, in source order, each
+	// time a file is organized.
+	PlaylistFile string
 }
 
 // Organizer post-processes a finished download. remotePath is the path the
@@ -135,6 +140,7 @@ type Runner struct {
 	searchRate         *rateLimiter
 	wg                 sync.WaitGroup
 	now                func() time.Time
+	playlistMu         sync.Mutex
 }
 
 // New creates a runner for an existing run (fresh or resumed).
@@ -237,8 +243,35 @@ func (r *Runner) Load(ctx context.Context) error {
 			r.reconcile(ts, transfers)
 		}
 	}
+	r.writePlaylist()
 	r.notify()
 	return nil
+}
+
+// writePlaylist rewrites the playlist file (if enabled) from the tracks'
+// organized paths.
+func (r *Runner) writePlaylist() {
+	if r.opts.PlaylistFile == "" || r.opts.Organizer == nil {
+		return
+	}
+	r.playlistMu.Lock()
+	defer r.playlistMu.Unlock()
+	r.mu.Lock()
+	var entries []organize.PlaylistEntry
+	for _, ts := range r.tracks {
+		if ts.State == store.StateDone && ts.OutputPath != "" {
+			entries = append(entries, organize.PlaylistEntry{Path: ts.OutputPath, Title: ts.Title, Artists: ts.Artists, DurationMs: ts.DurationMs})
+		}
+	}
+	r.mu.Unlock()
+	if len(entries) == 0 {
+		if _, err := os.Stat(r.opts.PlaylistFile); err != nil {
+			return // nothing to list yet; don't create an empty file
+		}
+	}
+	if err := organize.WritePlaylist(r.opts.PlaylistFile, r.run.Name, entries); err != nil {
+		r.addError(fmt.Sprintf("writing playlist file %s: %v", r.opts.PlaylistFile, err))
+	}
 }
 
 // reconcile decides what to do with a track that was downloading when

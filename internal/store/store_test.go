@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -96,5 +97,64 @@ func TestMemoryStore(t *testing.T) {
 	defer s.Close()
 	if _, _, err := s.CreateRun(context.Background(), Run{SourceURL: "x", QualityPreset: "a", SpeedPreset: "b"}, nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRunOutputAndMigrationFromV1(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "old.db")
+	// A database written by a build that only knew schema v1.
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`,
+		migrations[0],
+		`INSERT INTO schema_migrations VALUES (1, 0)`,
+		`INSERT INTO runs(source_url,quality_preset,speed_preset,created_at) VALUES('u','q','s',0)`,
+		`INSERT INTO tracks(run_id,pos,meta_json,state,updated_at) VALUES(1,0,'{"title":"T"}','done',0)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	old, err := s.GetRun(ctx, 1)
+	if err != nil || old.Output != OutputLibrary || old.PlaylistFile {
+		t.Fatalf("old run %+v %v", old, err)
+	}
+	ts, err := s.Tracks(ctx, 1)
+	if err != nil || len(ts) != 1 || ts[0].OutputPath != "" {
+		t.Fatalf("old tracks %+v %v", ts, err)
+	}
+
+	run, nts, err := s.CreateRun(ctx, Run{SourceURL: "v", QualityPreset: "q", SpeedPreset: "s", Output: OutputPlaylist, PlaylistFile: true},
+		[]spotify.Track{{Title: "A"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetRun(ctx, run.ID); got.Output != OutputPlaylist || !got.PlaylistFile {
+		t.Fatalf("new run %+v", got)
+	}
+	nts[0].State, nts[0].OutputPath = StateDone, "/m/A.flac"
+	if err := s.UpdateTrack(ctx, nts[0]); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Tracks(ctx, run.ID); got[0].OutputPath != "/m/A.flac" {
+		t.Fatalf("output path %+v", got[0])
+	}
+	if err := s.UpdateRunOutput(ctx, run.ID, OutputLibrary, false); err != nil {
+		t.Fatal(err)
+	}
+	rs, _ := s.ListRuns(ctx)
+	if rs[0].ID != run.ID || rs[0].Output != OutputLibrary || rs[0].PlaylistFile {
+		t.Fatalf("list %+v", rs[0])
 	}
 }

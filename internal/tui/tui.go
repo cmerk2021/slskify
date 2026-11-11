@@ -166,20 +166,26 @@ func (m *Model) loadRuns() tea.Cmd {
 }
 
 func (m *Model) startRun(p *prerunModel) tea.Cmd {
-	quality, speed := p.quality(), p.speed()
+	rs := p.settings()
 	m.loading = "Starting run (checking slskd transfers)"
 	return func() tea.Msg {
 		var run store.Run
 		var err error
 		if p.resume != nil {
 			run = p.resume.Run
-			if run.QualityPreset != quality || run.SpeedPreset != speed {
-				if err = m.app.Store.UpdateRunPresets(m.ctx, run.ID, quality, speed); err != nil {
+			if run.QualityPreset != rs.Quality || run.SpeedPreset != rs.Speed {
+				if err = m.app.Store.UpdateRunPresets(m.ctx, run.ID, rs.Quality, rs.Speed); err != nil {
 					return runnerStartedMsg{err: err}
 				}
 			}
-			run.QualityPreset, run.SpeedPreset = quality, speed
-		} else if run, err = m.app.CreateRun(m.ctx, p.coll, quality, speed); err != nil {
+			if run.Output != rs.Output || run.PlaylistFile != rs.PlaylistFile {
+				if err = m.app.Store.UpdateRunOutput(m.ctx, run.ID, rs.Output, rs.PlaylistFile); err != nil {
+					return runnerStartedMsg{err: err}
+				}
+			}
+			run.QualityPreset, run.SpeedPreset = rs.Quality, rs.Speed
+			run.Output, run.PlaylistFile = rs.Output, rs.PlaylistFile
+		} else if run, err = m.app.CreateRun(m.ctx, p.coll, rs); err != nil {
 			return runnerStartedMsg{err: err}
 		}
 		r, err := m.app.NewRunner(m.ctx, run)

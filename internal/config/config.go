@@ -100,6 +100,12 @@ type OrganizeConfig struct {
 	MusicDir string `toml:"music_dir"`
 	// PathTemplate is the file path under MusicDir, without extension.
 	PathTemplate string `toml:"path_template"`
+	// PlaylistDir is where playlist output mode puts each run's flat
+	// folder (<playlist_dir>/<playlist name>/). Empty means MusicDir.
+	PlaylistDir string `toml:"playlist_dir"`
+	// PlaylistFile preselects writing <music_dir>/<playlist name>.m3u8 for
+	// new runs (it can be changed per run on the pre-run screen).
+	PlaylistFile bool `toml:"playlist_file"`
 }
 
 // Config is the full configuration.
@@ -433,6 +439,8 @@ func SaveOrganize(path string, o OrganizeConfig) error {
 			"downloads_dir": strings.TrimSpace(o.DownloadsDir),
 			"music_dir":     strings.TrimSpace(o.MusicDir),
 			"path_template": strings.TrimSpace(o.PathTemplate),
+			"playlist_dir":  strings.TrimSpace(o.PlaylistDir),
+			"playlist_file": o.PlaylistFile,
 		}
 	})
 }

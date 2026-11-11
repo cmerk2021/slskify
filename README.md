@@ -116,14 +116,15 @@ The environment variables are `SLSKD_URL`, `SLSKD_API_KEY`,
 ### Flow and keys
 
 launch → setup (if needed) → run picker / paste URL → tracks load →
-**pre-run screen** (choose quality and speed presets) → main view.
+**pre-run screen** (choose quality and speed presets and, with organizing
+on, the output mode and playlist file) → main view.
 
 | Screen | Keys |
 |---|---|
 | everywhere | `ctrl+c` quit (state is saved; in-flight work is stopped cleanly) |
 | setup | `tab`/`↑↓` field, `space` toggle organizing, `enter` next field / test & save on the last, `ctrl+t` test & save, `esc` cancel |
 | run picker | type/paste URL, `enter` load (empty URL = resume highlighted run), `↑↓`, `ctrl+s` setup |
-| pre-run | `tab` switch list, `↑↓` choose, `enter` start, `n` new / `e` edit / `c` copy / `d` delete (twice) quality profile, `esc` back |
+| pre-run | `tab` switch section, `↑↓` choose, `space` toggle the playlist file, `enter` start, `n` new / `e` edit / `c` copy / `d` delete (twice) quality profile, `esc` back |
 | quality profile editor | `tab` next field, in the rank list: `a` add, `enter` edit, `d` delete, `shift+↑↓` or `[` `]` move, `1`–`9` quick-add a common rule; `ctrl+s` save, `esc` cancel |
 | main | `←→`/`tab` tabs, `↑↓ pgup pgdn g G`, `enter` detail, `r` review, `s` skip, `p` pause/resume, `ctrl+s` setup, `q` quit |
 | detail / review | `1`–`9` pick that rank, `enter` pick highlighted row, `s` skip, `e` edit query and re-search, `n`/`N` next/prev (review), `o` cycle sort, `x` show rejected, `p` pause, `esc` back |
@@ -358,6 +359,34 @@ the container path in that case.)
 With organizing disabled (the default, and the right choice for a remote
 slskd), nothing changes: slskify only uses the two web APIs.
 
+### Output mode: library or playlist folder
+
+With organizing on, the pre-run screen has an **Output** choice per run:
+
+- **library** (default): files go where your path template says.
+- **playlist**: ignores the path template. Tags are still normalized from
+  Spotify (step 2), but every file goes flat into one folder,
+  `<playlist folders dir>/<playlist name>/<artist> - <title>.<ext>`, with no
+  subfolders. The playlist folders dir is set in setup
+  (`organize.playlist_dir`) and defaults to the music directory.
+
+### Playlist files (.m3u8)
+
+The pre-run screen also has a separate **Playlist file** switch. It doesn't
+depend on the output mode. When it's on, slskify writes
+`<music dir>/<playlist name>.m3u8`, an extended M3U playlist in UTF-8. Entries
+follow the Spotify order, and paths are relative to the music directory with
+`/` separators, such as `Nightly/THE VOID/haunted house.mp3` or
+`My Mix/Nightly - haunted house.mp3`. Because the paths are relative, you can
+move the library and the playlist still works. The file is rewritten each time
+a track is organized and when a run is resumed. Only tracks that were organized
+are listed. Files that were moved or deleted since then are left out. Set
+`organize.playlist_file = true` to turn the switch on by default for new runs.
+Runs with the same name share a playlist file.
+
+Both options need organizing to be enabled. You can change them when you
+resume a run. Files that were already organized stay where they are.
+
 | Speed preset | Searches | Downloads | Delay | Search timeout |
 |---|---|---|---|---|
 | `slow` | 1 | 2 | 3 s | 20 s |
@@ -394,6 +423,8 @@ enabled = false
 downloads_dir = ""              # slskd's downloads directory, as a path on this machine
 music_dir = ""                  # library root, e.g. "~/Music"
 path_template = "{album_artist}/{album}/{title}"   # extension is added
+playlist_dir = ""               # playlist output mode: <dir>/<playlist name>/ (empty = music_dir)
+playlist_file = false           # preselect writing <music_dir>/<playlist name>.m3u8 for new runs
 
 [match]
 high_threshold = 80

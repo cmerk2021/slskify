@@ -69,15 +69,23 @@ func (a *App) Speed(name string) (config.SpeedPreset, string) {
 	return a.Cfg.SpeedPresets[a.Cfg.SpeedPreset], a.Cfg.SpeedPreset
 }
 
+// RunSettings are the per-run choices made on the pre-run screen.
+type RunSettings struct {
+	Quality, Speed string
+	// Output is store.OutputLibrary or store.OutputPlaylist.
+	Output       string
+	PlaylistFile bool
+}
+
 // CreateRun persists a new run for a resolved collection.
-func (a *App) CreateRun(ctx context.Context, c *spotify.Collection, quality, speed string) (store.Run, error) {
+func (a *App) CreateRun(ctx context.Context, c *spotify.Collection, rs RunSettings) (store.Run, error) {
 	name := c.Name
 	if name == "" {
 		name = string(c.Kind) + " " + c.ID
 	}
 	run, _, err := a.Store.CreateRun(ctx, store.Run{
 		SourceURL: c.URL, Kind: string(c.Kind), Name: name,
-		QualityPreset: quality, SpeedPreset: speed, Skipped: c.Skipped,
+		QualityPreset: rs.Quality, SpeedPreset: rs.Speed, Output: rs.Output, PlaylistFile: rs.PlaylistFile, Skipped: c.Skipped,
 	}, c.Tracks)
 	return run, err
 }
@@ -90,12 +98,18 @@ func (a *App) NewRunner(ctx context.Context, run store.Run) (*pipeline.Runner, e
 	opts := pipeline.Options{
 		Matcher: a.Matcher(), Policy: pol, Speed: sp, Download: a.Cfg.Download,
 	}
+	if (run.Output == store.OutputPlaylist || run.PlaylistFile) && !a.Cfg.Organize.Enabled {
+		return nil, errors.New("playlist output and playlist files need organizing turned on (ctrl+s on the start screen opens setup)")
+	}
 	if a.Cfg.Organize.Enabled {
-		org, err := a.Organizer()
+		org, err := a.OrganizerFor(run)
 		if err != nil {
 			return nil, fmt.Errorf("organize: %w (fix it in setup or set organize.enabled = false)", err)
 		}
 		opts.Organizer = org
+		if run.PlaylistFile {
+			opts.PlaylistFile = organize.PlaylistFilePath(org.LibraryDir(), run.Name)
+		}
 	}
 	r := pipeline.New(a.Slskd, a.Store, run, opts)
 	if err := r.Load(ctx); err != nil {
@@ -108,6 +122,40 @@ func (a *App) NewRunner(ctx context.Context, run store.Run) (*pipeline.Runner, e
 func (a *App) Organizer() (*organize.Organizer, error) {
 	oc := a.Cfg.Organize
 	return organize.New(oc.DownloadsDir, oc.MusicDir, oc.PathTemplate, a.Spotify, nil)
+}
+
+// OrganizerFor builds the organizer for run: the library layout from the
+// config, or for playlist output a flat folder named after the run.
+func (a *App) OrganizerFor(run store.Run) (*organize.Organizer, error) {
+	if run.Output != store.OutputPlaylist {
+		return a.Organizer()
+	}
+	oc := a.Cfg.Organize
+	dir, err := a.PlaylistDir()
+	if err != nil {
+		return nil, err
+	}
+	org, err := organize.New(oc.DownloadsDir, organize.PlaylistFolder(dir, run.Name), organize.FlatTemplate, a.Spotify, nil)
+	if err != nil {
+		return nil, err
+	}
+	mu, err := organize.ExpandPath(oc.MusicDir)
+	if err != nil {
+		return nil, err
+	}
+	org.SetLibraryDir(mu)
+	return org, nil
+}
+
+// PlaylistDir is the folder playlist output mode creates per-playlist
+// folders in (organize.playlist_dir, or the music directory).
+func (a *App) PlaylistDir() (string, error) {
+	oc := a.Cfg.Organize
+	d := oc.PlaylistDir
+	if strings.TrimSpace(d) == "" {
+		d = oc.MusicDir
+	}
+	return organize.ExpandPath(d)
 }
 
 // CheckOrganize validates organize settings, including the directories,
@@ -132,7 +180,7 @@ func (a *App) ApplyOrganize(oc config.OrganizeConfig) error {
 		return fmt.Errorf("saving config: %w", err)
 	}
 	oc.DownloadsDir, oc.MusicDir = strings.TrimSpace(oc.DownloadsDir), strings.TrimSpace(oc.MusicDir)
-	oc.PathTemplate = strings.TrimSpace(oc.PathTemplate)
+	oc.PathTemplate, oc.PlaylistDir = strings.TrimSpace(oc.PathTemplate), strings.TrimSpace(oc.PlaylistDir)
 	a.Cfg.Organize = oc
 	return nil
 }

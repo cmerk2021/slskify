@@ -238,7 +238,7 @@ func (mm *mainModel) header(s pipeline.Snapshot, w int) []string {
 	total := len(s.Tracks)
 	finished := s.Counts[store.StateDone] + s.Counts[store.StateSkipped] + s.Counts[store.StateFailed]
 	title := stTitle.Render("slskify") + " ▸ " + stBold.Render(s.Run.Name)
-	right := stDim.Render(fmt.Sprintf("quality: %s · speed: %s", s.Run.QualityPreset, s.Run.SpeedPreset))
+	right := stDim.Render(fmt.Sprintf("quality: %s · speed: %s", s.Run.QualityPreset, s.Run.SpeedPreset) + runExtras(s.Run))
 	if s.Paused {
 		right = stPaused.Render("PAUSED") + " " + right
 	}
@@ -360,4 +360,17 @@ func baseName(p string) string {
 		return p[i+1:]
 	}
 	return p
+}
+
+// runExtras describes a run's non-default output options, e.g.
+// " · playlist folder · .m3u8".
+func runExtras(r store.Run) string {
+	var s string
+	if r.Output == store.OutputPlaylist {
+		s += " · playlist folder"
+	}
+	if r.PlaylistFile {
+		s += " · .m3u8"
+	}
+	return s
 }
