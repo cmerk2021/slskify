@@ -26,11 +26,11 @@ func prerunFixture(t *testing.T, organize bool) (*Model, *prerunModel) {
 
 func TestPrerunOutputOptions(t *testing.T) {
 	m, p := prerunFixture(t, true)
-	if rs := p.settings(); rs.Output != store.OutputLibrary || !rs.PlaylistFile {
+	if rs := p.settings(); rs.Output != store.OutputLibrary || !rs.PlaylistFile || rs.ReplayGain {
 		t.Fatalf("defaults %+v", rs)
 	}
 	out, _ := p.view(160, 60)
-	for _, want := range []string{"Output", "library", "playlist", filepath.Join("/music", "Road Trip", "{artist} - {title}"), filepath.Join("/music", "Road Trip.m3u8")} {
+	for _, want := range []string{"Output", "Options", "ReplayGain", "library", "playlist", filepath.Join("/music", "Road Trip", "{artist} - {title}"), filepath.Join("/music", "Road Trip.m3u8")} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("view lacks %q:\n%s", want, out)
 		}
@@ -47,12 +47,16 @@ func TestPrerunOutputOptions(t *testing.T) {
 	if p.focus != secPlaylistFile || p.settings().PlaylistFile {
 		t.Fatalf("space should toggle the playlist file off: focus %d %+v", p.focus, p.settings())
 	}
+	send(m, "tab", " ")
+	if p.focus != secReplayGain || !p.settings().ReplayGain {
+		t.Fatalf("space should toggle ReplayGain on: focus %d %+v", p.focus, p.settings())
+	}
 	send(m, "tab")
 	if p.focus != secQuality {
 		t.Fatalf("should wrap, focus %d", p.focus)
 	}
 	send(m, "shift+tab")
-	if p.focus != secPlaylistFile {
+	if p.focus != secReplayGain {
 		t.Fatalf("shift+tab should wrap back, focus %d", p.focus)
 	}
 }
@@ -75,9 +79,9 @@ func TestPrerunResumeKeepsOutput(t *testing.T) {
 	cfg := config.Default()
 	cfg.Organize = config.OrganizeConfig{Enabled: true, DownloadsDir: "/dl", MusicDir: "/music"}
 	a := app.New(cfg, "", nil)
-	rs := store.RunSummary{Run: store.Run{Name: "Old", QualityPreset: "mp3-best", SpeedPreset: "slow", Output: store.OutputPlaylist, PlaylistFile: true}}
+	rs := store.RunSummary{Run: store.Run{Name: "Old", QualityPreset: "mp3-best", SpeedPreset: "slow", Output: store.OutputPlaylist, PlaylistFile: true, ReplayGain: true}}
 	p := newPrerunModel(a, nil, &rs)
-	if s := p.settings(); s.Output != store.OutputPlaylist || !s.PlaylistFile || s.Quality != "mp3-best" || s.Speed != "slow" {
+	if s := p.settings(); s.Output != store.OutputPlaylist || !s.PlaylistFile || !s.ReplayGain || s.Quality != "mp3-best" || s.Speed != "slow" {
 		t.Fatalf("resume settings %+v", s)
 	}
 }

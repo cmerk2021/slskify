@@ -53,7 +53,10 @@ type Run struct {
 	// PlaylistFile: keep an .m3u8 in the music directory listing the
 	// run's organized files.
 	PlaylistFile bool
-	CreatedAt    time.Time
+	// ReplayGain: run rsgain on each organized file to write ReplayGain
+	// tags.
+	ReplayGain bool
+	CreatedAt  time.Time
 	// Skipped lists source items that could not be resolved.
 	Skipped []spotify.SkippedItem
 }
@@ -181,6 +184,8 @@ var migrations = []string{
 	`ALTER TABLE runs ADD COLUMN output TEXT NOT NULL DEFAULT '';
 	ALTER TABLE runs ADD COLUMN playlist_file INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE tracks ADD COLUMN output_path TEXT NOT NULL DEFAULT '';`,
+	// 3: ReplayGain option
+	`ALTER TABLE runs ADD COLUMN replaygain INTEGER NOT NULL DEFAULT 0;`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -232,8 +237,8 @@ func (s *Store) CreateRun(ctx context.Context, r Run, tracks []spotify.Track) (R
 		return r, nil, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `INSERT INTO runs(source_url,kind,name,quality_preset,speed_preset,output,playlist_file,skipped_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
-		r.SourceURL, r.Kind, r.Name, r.QualityPreset, r.SpeedPreset, r.Output, r.PlaylistFile, string(skipped), r.CreatedAt.Unix())
+	res, err := tx.ExecContext(ctx, `INSERT INTO runs(source_url,kind,name,quality_preset,speed_preset,output,playlist_file,replaygain,skipped_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		r.SourceURL, r.Kind, r.Name, r.QualityPreset, r.SpeedPreset, r.Output, r.PlaylistFile, r.ReplayGain, string(skipped), r.CreatedAt.Unix())
 	if err != nil {
 		return r, nil, err
 	}
@@ -259,10 +264,11 @@ func (s *Store) UpdateRunPresets(ctx context.Context, runID int64, quality, spee
 	return err
 }
 
-// UpdateRunOutput changes the output mode and playlist-file option of a
-// run (e.g. chosen on resume). Files already organized stay where they are.
-func (s *Store) UpdateRunOutput(ctx context.Context, runID int64, output string, playlistFile bool) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE runs SET output=?, playlist_file=? WHERE id=?`, output, playlistFile, runID)
+// UpdateRunOutput changes the output mode, playlist-file and ReplayGain
+// options of a run (e.g. chosen on resume). Files already organized stay
+// where they are.
+func (s *Store) UpdateRunOutput(ctx context.Context, runID int64, output string, playlistFile, replayGain bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE runs SET output=?, playlist_file=?, replaygain=? WHERE id=?`, output, playlistFile, replayGain, runID)
 	return err
 }
 
@@ -279,7 +285,7 @@ func (s *Store) GetRun(ctx context.Context, id int64) (Run, error) {
 	return r, err
 }
 
-const runCols = `id,source_url,kind,name,quality_preset,speed_preset,output,playlist_file,skipped_json,created_at`
+const runCols = `id,source_url,kind,name,quality_preset,speed_preset,output,playlist_file,replaygain,skipped_json,created_at`
 
 type scanner interface{ Scan(...any) error }
 
@@ -287,7 +293,7 @@ func scanRun(sc scanner) (Run, error) {
 	var r Run
 	var skipped string
 	var created int64
-	if err := sc.Scan(&r.ID, &r.SourceURL, &r.Kind, &r.Name, &r.QualityPreset, &r.SpeedPreset, &r.Output, &r.PlaylistFile, &skipped, &created); err != nil {
+	if err := sc.Scan(&r.ID, &r.SourceURL, &r.Kind, &r.Name, &r.QualityPreset, &r.SpeedPreset, &r.Output, &r.PlaylistFile, &r.ReplayGain, &skipped, &created); err != nil {
 		return r, err
 	}
 	r.CreatedAt = time.Unix(created, 0)

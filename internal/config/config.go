@@ -106,6 +106,9 @@ type OrganizeConfig struct {
 	// PlaylistFile preselects writing <music_dir>/<playlist name>.m3u8 for
 	// new runs (it can be changed per run on the pre-run screen).
 	PlaylistFile bool `toml:"playlist_file"`
+	// ReplayGain preselects running rsgain on each newly organized file
+	// (track gain tags) for new runs. rsgain must be installed.
+	ReplayGain bool `toml:"replaygain"`
 }
 
 // Config is the full configuration.
@@ -441,6 +444,7 @@ func SaveOrganize(path string, o OrganizeConfig) error {
 			"path_template": strings.TrimSpace(o.PathTemplate),
 			"playlist_dir":  strings.TrimSpace(o.PlaylistDir),
 			"playlist_file": o.PlaylistFile,
+			"replaygain":    o.ReplayGain,
 		}
 	})
 }

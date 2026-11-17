@@ -372,8 +372,8 @@ With organizing on, the pre-run screen has an **Output** choice per run:
 
 ### Playlist files (.m3u8)
 
-The pre-run screen also has a separate **Playlist file** switch. It doesn't
-depend on the output mode. When it's on, slskify writes
+The pre-run screen also has an **Options** section with toggles that don't
+depend on the output mode. When **playlist file** is on, slskify writes
 `<music dir>/<playlist name>.m3u8`, an extended M3U playlist in UTF-8. Entries
 follow the Spotify order, and paths are relative to the music directory with
 `/` separators, such as `Nightly/THE VOID/haunted house.mp3` or
@@ -384,7 +384,20 @@ are listed. Files that were moved or deleted since then are left out. Set
 `organize.playlist_file = true` to turn the switch on by default for new runs.
 Runs with the same name share a playlist file.
 
-Both options need organizing to be enabled. You can change them when you
+### ReplayGain (rsgain)
+
+The **ReplayGain** switch in **Options** runs
+[rsgain](https://github.com/complexlogic/rsgain) on each file right after it
+is organized, writing ReplayGain 2.0 track gain and peak tags
+(`rsgain custom --tagmode=i --clip-mode=p <file>`). Only the newly organized
+file is scanned, never the rest of the library, and files are not
+re-encoded; players that support ReplayGain apply the volume adjustment.
+rsgain must already be installed and on your `PATH`; slskify won't start a
+run with the switch on if it can't find it. A failed scan is reported but the
+track still counts as done. Set `organize.replaygain = true` to turn the
+switch on by default for new runs.
+
+All of these options need organizing to be enabled. You can change them when you
 resume a run. Files that were already organized stay where they are.
 
 | Speed preset | Searches | Downloads | Delay | Search timeout |
@@ -425,6 +438,7 @@ music_dir = ""                  # library root, e.g. "~/Music"
 path_template = "{album_artist}/{album}/{title}"   # extension is added
 playlist_dir = ""               # playlist output mode: <dir>/<playlist name>/ (empty = music_dir)
 playlist_file = false           # preselect writing <music_dir>/<playlist name>.m3u8 for new runs
+replaygain = false              # preselect tagging each new file with rsgain (must be on PATH)
 
 [match]
 high_threshold = 80

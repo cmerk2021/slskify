@@ -75,6 +75,8 @@ type RunSettings struct {
 	// Output is store.OutputLibrary or store.OutputPlaylist.
 	Output       string
 	PlaylistFile bool
+	// ReplayGain runs rsgain on each newly organized file.
+	ReplayGain bool
 }
 
 // CreateRun persists a new run for a resolved collection.
@@ -85,7 +87,7 @@ func (a *App) CreateRun(ctx context.Context, c *spotify.Collection, rs RunSettin
 	}
 	run, _, err := a.Store.CreateRun(ctx, store.Run{
 		SourceURL: c.URL, Kind: string(c.Kind), Name: name,
-		QualityPreset: rs.Quality, SpeedPreset: rs.Speed, Output: rs.Output, PlaylistFile: rs.PlaylistFile, Skipped: c.Skipped,
+		QualityPreset: rs.Quality, SpeedPreset: rs.Speed, Output: rs.Output, PlaylistFile: rs.PlaylistFile, ReplayGain: rs.ReplayGain, Skipped: c.Skipped,
 	}, c.Tracks)
 	return run, err
 }
@@ -98,8 +100,8 @@ func (a *App) NewRunner(ctx context.Context, run store.Run) (*pipeline.Runner, e
 	opts := pipeline.Options{
 		Matcher: a.Matcher(), Policy: pol, Speed: sp, Download: a.Cfg.Download,
 	}
-	if (run.Output == store.OutputPlaylist || run.PlaylistFile) && !a.Cfg.Organize.Enabled {
-		return nil, errors.New("playlist output and playlist files need organizing turned on (ctrl+s on the start screen opens setup)")
+	if (run.Output == store.OutputPlaylist || run.PlaylistFile || run.ReplayGain) && !a.Cfg.Organize.Enabled {
+		return nil, errors.New("playlist output, playlist files and ReplayGain need organizing turned on (ctrl+s on the start screen opens setup)")
 	}
 	if a.Cfg.Organize.Enabled {
 		org, err := a.OrganizerFor(run)
@@ -109,6 +111,12 @@ func (a *App) NewRunner(ctx context.Context, run store.Run) (*pipeline.Runner, e
 		opts.Organizer = org
 		if run.PlaylistFile {
 			opts.PlaylistFile = organize.PlaylistFilePath(org.LibraryDir(), run.Name)
+		}
+		if run.ReplayGain {
+			if err := organize.CheckRsgain(); err != nil {
+				return nil, fmt.Errorf("ReplayGain: %w", err)
+			}
+			opts.ReplayGain = organize.ReplayGain
 		}
 	}
 	r := pipeline.New(a.Slskd, a.Store, run, opts)

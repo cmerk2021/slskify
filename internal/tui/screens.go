@@ -137,6 +137,8 @@ type prerunModel struct {
 	organizeOn    bool
 	output        string // store.OutputLibrary or store.OutputPlaylist
 	playlistFile  bool
+	replayGain    bool
+	rsgainErr     error  // set when rsgain is not installed
 	libraryDest   string // shown next to the output choices
 	playlistDest  string
 	playlistFPath string
@@ -148,6 +150,7 @@ const (
 	secSpeed
 	secOutput
 	secPlaylistFile
+	secReplayGain
 	numSections
 )
 
@@ -158,10 +161,11 @@ func newPrerunModel(a *app.App, coll *spotify.Collection, resume *store.RunSumma
 	p := &prerunModel{coll: coll, resume: resume, sNames: a.Cfg.SpeedPresetNames(), sp: a.Cfg.SpeedPresets}
 	q, s := a.Cfg.QualityPreset, a.Cfg.SpeedPreset
 	p.playlistFile = a.Cfg.Organize.Enabled && a.Cfg.Organize.PlaylistFile
+	p.replayGain = a.Cfg.Organize.Enabled && a.Cfg.Organize.ReplayGain
 	name := ""
 	if resume != nil {
 		q, s = resume.QualityPreset, resume.SpeedPreset
-		p.output, p.playlistFile, name = resume.Output, resume.PlaylistFile, resume.Name
+		p.output, p.playlistFile, p.replayGain, name = resume.Output, resume.PlaylistFile, resume.ReplayGain, resume.Name
 	} else if coll != nil {
 		name = coll.Name
 	}
@@ -179,6 +183,7 @@ func newPrerunModel(a *app.App, coll *spotify.Collection, resume *store.RunSumma
 		p.playlistDest = filepath.Join(organize.PlaylistFolder(dir, name), organize.FlatTemplate)
 	}
 	p.playlistFPath = organize.PlaylistFilePath(music, name)
+	p.rsgainErr = organize.CheckRsgain()
 	return p
 }
 
@@ -186,7 +191,7 @@ func newPrerunModel(a *app.App, coll *spotify.Collection, resume *store.RunSumma
 func (p *prerunModel) settings() app.RunSettings {
 	rs := app.RunSettings{Quality: p.quality(), Speed: p.speed()}
 	if p.organizeOn {
-		rs.Output, rs.PlaylistFile = p.output, p.playlistFile
+		rs.Output, rs.PlaylistFile, rs.ReplayGain = p.output, p.playlistFile, p.replayGain
 	}
 	return rs
 }
@@ -290,6 +295,9 @@ func (m *Model) updatePrerun(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case secPlaylistFile:
 			p.playlistFile = !p.playlistFile
 			return m, nil
+		case secReplayGain:
+			p.replayGain = !p.replayGain
+			return m, nil
 		case secOutput:
 			if p.output == store.OutputPlaylist {
 				p.output = store.OutputLibrary
@@ -376,7 +384,7 @@ func (p *prerunModel) view(w, h int) (string, string) {
 	})
 	if !p.organizeOn {
 		lines = append(lines, "  "+stBold.Render("Output"), stDim.Render("   files stay where slskd puts them; turn on organizing in setup (ctrl+s on the start screen)"),
-			stDim.Render("   for playlist output and playlist files"))
+			stDim.Render("   for playlist output, playlist files and ReplayGain"))
 	} else {
 		sel := 0
 		if p.output == store.OutputPlaylist {
@@ -388,21 +396,31 @@ func (p *prerunModel) view(w, h int) (string, string) {
 			}
 			return "your organize settings: " + p.libraryDest + ".<ext>", ""
 		})
-		t := "  " + stBold.Render("Playlist file")
-		if p.focus == secPlaylistFile {
-			t = stTitle.Render("▸ Playlist file")
+		t := "  " + stBold.Render("Options")
+		if p.focus == secPlaylistFile || p.focus == secReplayGain {
+			t = stTitle.Render("▸ Options")
 		}
-		box := "[ ] off"
-		if p.playlistFile {
-			box = "[x] write " + p.playlistFPath
+		lines = append(lines, t)
+		toggle := func(sec int, on bool, label, onText, hint string) {
+			box := "[ ] " + label
+			if on {
+				box = "[x] " + label + onText
+			}
+			if p.focus == sec {
+				box = stBold.Render(box)
+			}
+			lines = append(lines, "   "+box, stDim.Render("       "+hint))
 		}
-		if p.focus == secPlaylistFile {
-			box = stBold.Render(box)
+		toggle(secPlaylistFile, p.playlistFile, "playlist file", ": write "+p.playlistFPath,
+			".m3u8 with paths relative to the music directory, updated as tracks finish")
+		toggle(secReplayGain, p.replayGain, "ReplayGain", ": tag new files with rsgain",
+			"runs rsgain on each newly organized file only (track gain), never the whole library")
+		if p.replayGain && p.rsgainErr != nil {
+			lines = append(lines, "       "+stWarn.Render("⚠ "+p.rsgainErr.Error()))
 		}
-		lines = append(lines, t, "   "+box, stDim.Render("       .m3u8 with paths relative to the music directory, updated as tracks finish"))
 	}
 	keys := []string{"tab", "switch section", "↑↓", "choose"}
-	if p.focus == secPlaylistFile {
+	if p.focus == secPlaylistFile || p.focus == secReplayGain {
 		keys = []string{"tab", "switch section", "space", "toggle"}
 	}
 	keys = append(keys, "enter", "start", "n/e/c/d", "new/edit/copy/delete quality profile", "esc", "back", "q", "quit")

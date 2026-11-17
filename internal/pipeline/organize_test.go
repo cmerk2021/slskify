@@ -179,3 +179,35 @@ func TestPipelinePlaylistFileNotCreatedWhenEmpty(t *testing.T) {
 		t.Fatalf("empty playlist file created: %v", err)
 	}
 }
+
+func TestPipelineReplayGainNewFileOnly(t *testing.T) {
+	sl := &fakeSlskd{responses: func(string) []slskd.Response { return []slskd.Response{goodResponse("a", 9e6)} }}
+	opts := testOptions()
+	opts.Organizer = &fakeOrganizer{}
+	var mu sync.Mutex
+	var got []string
+	opts.ReplayGain = func(_ context.Context, p string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, p)
+		return errors.New("bad file")
+	}
+	h := newHarness(t, sl, opts, wonderwall)
+	h.start(opts, nil)
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(h.r.Snapshot().Tracks[0].Reason, "ReplayGain") {
+		if time.Now().After(deadline) {
+			t.Fatalf("no ReplayGain result: %q", h.r.Snapshot().Tracks[0].Reason)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	v := h.r.Snapshot().Tracks[0]
+	if v.State != store.StateDone || !strings.HasSuffix(v.Reason, "; ReplayGain failed: bad file") {
+		t.Fatalf("%s %q", v.State, v.Reason)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 || got[0] != "/music/Wonderwall.flac" {
+		t.Fatalf("rsgain called with %v", got)
+	}
+}
