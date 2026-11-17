@@ -192,13 +192,13 @@ func TestOrganizeConfig(t *testing.T) {
 	if o := cfg.Organize; o.Enabled || o.DownloadsDir != "/x" || o.PathTemplate != "{title}" {
 		t.Fatalf("after save %+v", o)
 	}
-	if err := SaveOrganize(path, OrganizeConfig{MusicDir: "/m", PlaylistDir: " /p ", PlaylistFile: true}); err != nil {
+	if err := SaveOrganize(path, OrganizeConfig{MusicDir: "/m", PlaylistDir: " /p ", PlaylistFile: true, ReplayGain: true}); err != nil {
 		t.Fatal(err)
 	}
 	if cfg, err = Load(path); err != nil {
 		t.Fatal(err)
 	}
-	if o := cfg.Organize; o.PlaylistDir != "/p" || !o.PlaylistFile {
+	if o := cfg.Organize; o.PlaylistDir != "/p" || !o.PlaylistFile || !o.ReplayGain {
 		t.Fatalf("playlist settings %+v", o)
 	}
 }

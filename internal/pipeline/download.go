@@ -7,6 +7,7 @@ import (
 
 	"github.com/cmerk2021/slskify/internal/match"
 	"github.com/cmerk2021/slskify/internal/slskd"
+	"github.com/cmerk2021/slskify/internal/spotify"
 	"github.com/cmerk2021/slskify/internal/store"
 )
 
@@ -192,7 +193,28 @@ func (r *Runner) finishDownload(ctx context.Context, ts *trackState, cand *match
 	r.mu.Unlock()
 	r.setState(ts, store.StateDone, reason)
 	r.writePlaylist()
+	r.replayGain(ctx, ts, track, res.Path, reason)
 }
+
+// replayGain tags a newly organized file with ReplayGain (if enabled). The
+// track is already done; failures are reported but change nothing else.
+func (r *Runner) replayGain(ctx context.Context, ts *trackState, track spotify.Track, path, reason string) {
+	if r.opts.ReplayGain == nil {
+		return
+	}
+	// Don't kill rsgain mid-write on shutdown; it only scans one file.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), replayGainTimeout)
+	defer cancel()
+	if err := r.opts.ReplayGain(ctx, path); err != nil {
+		r.addError(fmt.Sprintf("%s – %s: ReplayGain: %v", track.PrimaryArtist(), track.Title, err))
+		r.setState(ts, store.StateDone, reason+"; ReplayGain failed: "+err.Error())
+		return
+	}
+	r.setState(ts, store.StateDone, reason+"; ReplayGain tagged")
+}
+
+// replayGainTimeout bounds one rsgain invocation.
+const replayGainTimeout = 5 * time.Minute
 
 // transferVerdict is what to do about a transfer after a poll. Keeping this
 // a pure function of (transfer, history, config) is where queue-position

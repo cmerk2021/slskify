@@ -150,11 +150,11 @@ func TestRunOutputAndMigrationFromV1(t *testing.T) {
 	if got, _ := s.Tracks(ctx, run.ID); got[0].OutputPath != "/m/A.flac" {
 		t.Fatalf("output path %+v", got[0])
 	}
-	if err := s.UpdateRunOutput(ctx, run.ID, OutputLibrary, false); err != nil {
+	if err := s.UpdateRunOutput(ctx, run.ID, OutputLibrary, false, true); err != nil {
 		t.Fatal(err)
 	}
 	rs, _ := s.ListRuns(ctx)
-	if rs[0].ID != run.ID || rs[0].Output != OutputLibrary || rs[0].PlaylistFile {
+	if rs[0].ID != run.ID || rs[0].Output != OutputLibrary || rs[0].PlaylistFile || !rs[0].ReplayGain {
 		t.Fatalf("list %+v", rs[0])
 	}
 }

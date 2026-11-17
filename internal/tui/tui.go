@@ -178,13 +178,13 @@ func (m *Model) startRun(p *prerunModel) tea.Cmd {
 					return runnerStartedMsg{err: err}
 				}
 			}
-			if run.Output != rs.Output || run.PlaylistFile != rs.PlaylistFile {
-				if err = m.app.Store.UpdateRunOutput(m.ctx, run.ID, rs.Output, rs.PlaylistFile); err != nil {
+			if run.Output != rs.Output || run.PlaylistFile != rs.PlaylistFile || run.ReplayGain != rs.ReplayGain {
+				if err = m.app.Store.UpdateRunOutput(m.ctx, run.ID, rs.Output, rs.PlaylistFile, rs.ReplayGain); err != nil {
 					return runnerStartedMsg{err: err}
 				}
 			}
 			run.QualityPreset, run.SpeedPreset = rs.Quality, rs.Speed
-			run.Output, run.PlaylistFile = rs.Output, rs.PlaylistFile
+			run.Output, run.PlaylistFile, run.ReplayGain = rs.Output, rs.PlaylistFile, rs.ReplayGain
 		} else if run, err = m.app.CreateRun(m.ctx, p.coll, rs); err != nil {
 			return runnerStartedMsg{err: err}
 		}

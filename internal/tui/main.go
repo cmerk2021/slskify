@@ -363,7 +363,7 @@ func baseName(p string) string {
 }
 
 // runExtras describes a run's non-default output options, e.g.
-// " · playlist folder · .m3u8".
+// " · playlist folder · .m3u8 · replaygain".
 func runExtras(r store.Run) string {
 	var s string
 	if r.Output == store.OutputPlaylist {
@@ -371,6 +371,9 @@ func runExtras(r store.Run) string {
 	}
 	if r.PlaylistFile {
 		s += " · .m3u8"
+	}
+	if r.ReplayGain {
+		s += " · replaygain"
 	}
 	return s
 }

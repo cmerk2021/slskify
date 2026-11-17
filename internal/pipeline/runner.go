@@ -69,6 +69,10 @@ type Options struct {
 	// is rewritten with the run's organized files, in source order, each
 	// time a file is organized.
 	PlaylistFile string
+	// ReplayGain, when set (and an Organizer is), is called with each
+	// newly organized file to write ReplayGain tags (see
+	// organize.ReplayGain). Only that file is scanned.
+	ReplayGain func(ctx context.Context, path string) error
 }
 
 // Organizer post-processes a finished download. remotePath is the path the

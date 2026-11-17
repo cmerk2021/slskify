@@ -39,8 +39,10 @@ type setupModel struct {
 	labels   []string
 	hints    []string
 	organize bool
-	// playlistFile is kept as configured (edited in the config file).
+	// playlistFile and replayGain are kept as configured (edited in the
+	// config file).
 	playlistFile bool
+	replayGain   bool
 	dirHint      string
 	focus        int
 	testing      bool
@@ -64,6 +66,7 @@ func newSetupModel(a *app.App, canCancel bool) *setupModel {
 		missing:      a.Cfg.MissingCredentials(),
 		organize:     oc.Enabled,
 		playlistFile: oc.PlaylistFile,
+		replayGain:   oc.ReplayGain,
 		labels: []string{"slskd URL", "slskd API key", "Spotify client ID", "Spotify client secret",
 			"Organize downloads", "slskd downloads dir", "Music library dir", "Path template", "Playlist folders dir"},
 		hints: []string{
@@ -142,7 +145,7 @@ func (s *setupModel) creds() config.Credentials {
 func (s *setupModel) organizeConfig() config.OrganizeConfig {
 	v := func(i int) string { return strings.TrimSpace(s.inputs[i].Value()) }
 	return config.OrganizeConfig{Enabled: s.organize, DownloadsDir: v(fDownloads), MusicDir: v(fMusic), PathTemplate: v(fTemplate),
-		PlaylistDir: v(fPlaylistDir), PlaylistFile: s.playlistFile}
+		PlaylistDir: v(fPlaylistDir), PlaylistFile: s.playlistFile, ReplayGain: s.replayGain}
 }
 
 func (s *setupModel) move(d int) tea.Cmd {
